@@ -1,0 +1,9 @@
+[package]
+name = "proc_test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+doc_structure = { path = "../doc_structure" }
+traits = { path = "../traits" }
+pdf_parser_v3 = { path = "../extractor" }

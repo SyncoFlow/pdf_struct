@@ -1,0 +1,13 @@
+{
+    "name": "mupdf",
+    "version": "1.23.8",
+    "description": "A lightweight PDF, XPS, and E-book viewer",
+    "homepage": "https://mupdf.com/",
+    "dependencies": [
+        "zlib",
+        "libjpeg-turbo",
+        "freetype",
+        "jbig2dec",
+        "openjpeg"
+    ]
+}

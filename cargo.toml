@@ -1,0 +1,3 @@
+
+[workspace]
+members = ["doc_structure", "traits", "extractor", "proc_test"]

@@ -1,0 +1,8 @@
+[package]
+name = "traits"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+type-info = "0.2.1"
+type-info-derive = "0.2.0"

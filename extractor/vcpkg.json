@@ -1,0 +1,8 @@
+{
+    "name": "pdf-parser-bindings",
+    "version": "1.0.0",
+    "dependencies": ["mupdf"],
+    "vcpkg-configuration": {
+        "overlay-ports": ["./ports"]
+    }
+}

@@ -1,0 +1,7 @@
+/target
+/vcpkg
+/build
+/vcpkg_installed
+/data
+/out
+/.vscode 
