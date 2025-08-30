@@ -1,7 +1,7 @@
-// #![feature(const_type_id)]
+use pdf_struct_macros::{init, object};
+use pdf_struct_traits::*;
 
-use doc_structure::object;
-use traits::*;
+init!();
 
 // children expects a vector of T instead of a singular
 //                     tuple defines it as a pair
@@ -34,7 +34,7 @@ struct DataTable;
 struct Document;
 
 fn config() {
-    use pdf_struct_extractor::{config::*, pattern::Pattern};
+    use pdf_struct_classifer::{config::*, pattern::Pattern};
 
     let builder = Config::builder()
         .with_root::<Document>()
@@ -44,5 +44,4 @@ fn config() {
         .with_inferred::<DataTable>()
         .with_pattern(Pattern::from_pair::<Diagram, DataTable>())
         .build();
-    
 }

@@ -1,6 +1,6 @@
 extern crate type_info;
 
-use type_info::TypeInfo;
+use type_info::{Type, TypeInfo};
 
 /// Indicates the position of an object relative to the order of pages
 /// and comparing against the object paired.

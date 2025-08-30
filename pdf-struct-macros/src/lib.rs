@@ -222,20 +222,28 @@ pub fn object(args: TokenStream, input: TokenStream) -> TokenStream {
     let expanded = quote! {
         #(#generated_structs)*
 
+        #[derive(TypeInfo)]
         pub struct #struct_name {
             #(#generated_fields)*
         }
 
         #(#generated_impls)*
 
+
         impl Object for #struct_name {
             const OBJECT_TYPE: ObjectType = #object_type_variant;
-
-            fn type_id() -> std::any::TypeId {
-                std::any::TypeId::of::<#struct_name>()
-            }
         }
     };
 
     TokenStream::from(expanded)
+}
+
+#[proc_macro]
+#[allow(unused_variables)]
+pub fn init(input: TokenStream) -> TokenStream {
+    quote! {
+        #[macro_use]
+        extern crate type_info_derive;
+    }
+    .into()
 }
