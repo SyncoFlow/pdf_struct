@@ -5,5 +5,5 @@ members = [
     "pdf-struct-traits",
     "pdf-struct-extractor",
     "pdf-struct-examples",
-    "pdf-struct-classifer",    
+    "pdf-struct-classifier",    
 ]

@@ -1,5 +1,5 @@
 [package]
-name = "pdf-struct-classifer"
+name = "pdf-struct-classifier"
 version = "0.1.0"
 edition = "2024"
 
