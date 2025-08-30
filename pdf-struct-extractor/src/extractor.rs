@@ -23,7 +23,7 @@ use log::error;
 #[allow(unused)]
 mod bridge {
     unsafe extern "C++" {
-        include!("D:/coding/synco/pdf_parser_v3/extractor/src_cpp/main.h");
+        include!("pdf-struct-extractor/src_cpp/main.h");
         type PDFHandle;
 
         unsafe fn init(

@@ -6,17 +6,14 @@
 // use std::sync::{Arc, Mutex};
 // use tokio::sync::mpsc::channel;
 
-pub mod classifier;
-pub mod config;
 pub mod extractor;
-pub mod pattern;
 
-#[derive(Clone, Copy)]
-struct Doc;
+// #[derive(Clone, Copy)]
+// struct Doc;
 
-pub struct State {
-    doc: Doc,
-}
+// pub struct State {
+//     doc: Doc,
+// }
 
 // type SafeState = Arc<Mutex<State>>;
 // #[tokio::main]

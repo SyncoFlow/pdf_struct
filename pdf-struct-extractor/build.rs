@@ -20,7 +20,7 @@ fn main() {
     println!("cargo:rustc-link-search=native=build/vcpkg_installed/x64-windows/lib");
     println!("cargo:rustc-link-search=native={}/build/vcpkg_installed/x64-windows/lib", root.clone());
     println!("cargo:rustc-link-lib=static=libmupdf");
-    println!("cargo:rustc-link-lib=static=binding");
+    println!("cargo:rustc-link-lib=static=extractor");
     println!("cargo:rerun-if-changed=src_cpp/main.cpp");
     println!("cargo:rerun-if-changed=CMakeLists.txt");
 }

@@ -34,7 +34,7 @@ struct DataTable;
 struct Document;
 
 fn config() {
-    use pdf_parser_v3::{config::*, pattern::Pattern};
+    use pdf_struct_extractor::{config::*, pattern::Pattern};
 
     let builder = Config::builder()
         .with_root::<Document>()

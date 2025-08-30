@@ -1,0 +1,9 @@
+[package]
+name = "proc_test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pdf-struct-macros = { path = "../pdf-struct-macros" }
+pdf-struct-traits = { path = "../pdf-struct-traits" }
+pdf-struct-extractor = { path = "../pdf-struct-extractor" }

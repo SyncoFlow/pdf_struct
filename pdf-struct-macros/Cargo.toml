@@ -1,5 +1,5 @@
 [package]
-name = "doc_structure"
+name = "pdf-struct-macros"
 version = "0.1.0"
 edition = "2024"
 
@@ -7,7 +7,7 @@ edition = "2024"
 proc-macro2 = "1.0.101"
 quote = "1.0.40"
 syn = { version = "2.0.106", features = ["full"] }
-traits = { path = "../traits" }
+pdf-struct-traits = { path = "../pdf-struct-traits" }
 
 [lib]
 proc-macro = true

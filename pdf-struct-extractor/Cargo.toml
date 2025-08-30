@@ -1,5 +1,5 @@
 [package]
-name = "pdf_parser_v3"
+name = "pdf-struct-extractor"
 version = "0.1.0"
 edition = "2024"
 
@@ -10,9 +10,8 @@ env_logger = "0.11.8"
 log = "0.4.27"
 thiserror = "2.0.16"
 tokio = { version = "1.47.1", features = ["full"] }
-doc_structure = { path = "../doc_structure" }
-traits = { path = "../traits" }
-type-info = "0.2.1"
+pdf-struct-macros = { path = "../pdf-struct-macros" }
+pdf-struct-traits = { path = "../pdf-struct-traits" }
 
 [build-dependencies]
 cmake = "0.1.54"
@@ -23,9 +22,9 @@ logging = []
 
 [profile.release]
 opt-level = 3
-lto = "fat"             # Link-time optimization
-codegen-units = 1       # Better optimization at cost of compile time
-panic = "abort"         # Smaller binaries, faster unwinding
+lto = "fat"
+codegen-units = 1
+panic = "abort"
 overflow-checks = false
 
 [profile.release-with-debug]

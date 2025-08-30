@@ -11,7 +11,7 @@ if(NOT EXISTS "${CMAKE_TOOLCHAIN_FILE}")
     message(FATAL_ERROR "vcpkg toolchain file not found at ${CMAKE_TOOLCHAIN_FILE}")
 endif()
 
-project("binding")
+project("extractor")
 
 find_path(MUPDF_INCLUDE_DIR fitz.h
     PATHS
@@ -33,10 +33,10 @@ if(NOT MUPDF_INCLUDE_DIR OR NOT MUPDF_LIBRARY)
 endif()
 
 file(GLOB_RECURSE ALL_CPP_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/*.cpp")
-add_library(binding STATIC ${ALL_CPP_FILES})
+add_library(extractor STATIC ${ALL_CPP_FILES})
 
 get_filename_component(MUPDF_INCLUDE_PARENT ${MUPDF_INCLUDE_DIR} DIRECTORY)
-target_include_directories(binding PUBLIC
+target_include_directories(extractor PUBLIC
     ${MUPDF_INCLUDE_PARENT}
     "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/include"
     "${CMAKE_SOURCE_DIR}/build/vcpkg_installed/x64-windows/include"
@@ -44,9 +44,9 @@ target_include_directories(binding PUBLIC
     "${CMAKE_SOURCE_DIR}"
 )
 
-target_link_libraries(binding PUBLIC ${MUPDF_LIBRARY})
+target_link_libraries(extractor PUBLIC ${MUPDF_LIBRARY})
 
-install(TARGETS binding
+install(TARGETS extractor
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin)

@@ -1,3 +1,9 @@
 
 [workspace]
-members = ["doc_structure", "traits", "extractor", "proc_test"]
+members = [
+    "pdf-struct-macros",
+    "pdf-struct-traits",
+    "pdf-struct-extractor",
+    "pdf-struct-examples",
+    "pdf-struct-classifer",    
+]

@@ -1,5 +1,5 @@
 use std::any::TypeId;
-use traits::PairWith;
+use pdf_struct_traits::PairWith;
 
 /// Defines a Pattern to inference pages.
 ///

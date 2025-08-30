@@ -1,2 +1,4 @@
 [toolchain]
 channel = "nightly"
+# Nightly is required because we require type information, 
+# A lot of type information functionality is locked behind nightly releases. 

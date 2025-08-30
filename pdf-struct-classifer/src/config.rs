@@ -1,5 +1,5 @@
-use crate::classifier::{ClassiferError, ClassificationResult, Classify};
 use crate::pattern::Pattern;
+use crate::{ClassiferError, ClassificationResult, Classify};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -7,7 +7,7 @@ use std::fmt::{Debug, Display};
 // PairWith states that a type of page is always next to another type of page.
 // And defines the direction of both Types
 // I.e Diagram and Table are a pair, where Diagram comes before Table.
-use traits::{InferredPage, KeyPage, Root};
+use pdf_struct_traits::{InferredPage, KeyPage, Root};
 
 /// fn (img: &\[u8\]) -> Result<Any, ClassificationError>; (backslashes are for escaping)
 type ClassificationMethod<E> =

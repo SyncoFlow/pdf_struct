@@ -1,3 +1,6 @@
+pub mod pattern;
+pub mod config; 
+
 use crate::config::Config;
 use std::any::Any;
 use std::collections::HashMap;
