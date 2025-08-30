@@ -222,7 +222,7 @@ pub fn object(args: TokenStream, input: TokenStream) -> TokenStream {
     let expanded = quote! {
         #(#generated_structs)*
 
-        #[derive(TypeInfo)]
+        #[derive(TypeInfo, Default)]
         pub struct #struct_name {
             #(#generated_fields)*
         }
