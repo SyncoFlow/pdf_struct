@@ -44,8 +44,6 @@ struct Document;
 #[derive(Debug, thiserror::Error)]
 enum Error {}
 
-// impl Classify
-
 macro_rules! impl_classify {
     ($impl_for:ty) => {
         impl Classify for $impl_for {
