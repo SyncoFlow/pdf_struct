@@ -22,7 +22,7 @@ pub enum Pattern {
 impl Pattern {
     /// T being the first type in the pair (as it is represented in the document)
     /// U being the second pair in the pair (as it is represented in the document)
-    pub fn from_pair<T, U>() -> Self
+    pub const fn from_pair<T, U>() -> Self
     where
         T: PairWith<U>,
         U: PairWith<T>,

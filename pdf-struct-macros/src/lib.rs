@@ -1,9 +1,13 @@
 use proc_macro::TokenStream;
-use quote::{ToTokens, quote};
+use quote::quote;
 use syn::{
-    Ident, ItemStruct, Token, parenthesized, parse::Parse, parse_macro_input,
+    Expr, Ident, ItemStruct, Token, bracketed, parenthesized,
+    parse::Parse,
+    parse_macro_input,
     punctuated::Punctuated,
+    token::{Bracket, Paren},
 };
+
 struct ObjectArgs {
     args: Vec<ObjectArg>,
 }
@@ -13,8 +17,20 @@ enum ObjectArg {
     Metadata(Vec<Ident>),
     Parent(Ident),
     Pair(Ident),
-    Root,
-    Type(Ident),
+    PageType(PageType),
+    PairSequence(PairSequenceType),
+    Patterns(Vec<Expr>),
+}
+
+enum PageType {
+    Key,
+    Inferred,
+}
+
+enum PairSequenceType {
+    First,
+    Last,
+    None,
 }
 
 impl Parse for ObjectArgs {
@@ -25,47 +41,89 @@ impl Parse for ObjectArgs {
             let name: Ident = input.parse()?;
 
             match name.to_string().as_str() {
-                "root" => {
-                    args.push(ObjectArg::Root);
-                }
-                "children" | "metadata" | "parent" | "pair" | "object_type" => {
+                "children" => {
                     input.parse::<Token![=]>()?;
-
-                    match name.to_string().as_str() {
-                        "children" => {
-                            if input.peek(syn::token::Paren) {
-                                // Handle tuple: children = (Type1, Type2)
-                                let content;
-                                parenthesized!(content in input);
-                                let child_types: Punctuated<Ident, Token![,]> =
-                                    content.parse_terminated(Ident::parse, Token![,])?;
-                                args.push(ObjectArg::Children(child_types.into_iter().collect()));
-                            } else {
-                                // Handle single type: children = Type
-                                let child_type: Ident = input.parse()?;
-                                args.push(ObjectArg::Children(vec![child_type]));
-                            }
+                    if input.peek(Paren) {
+                        // tuple: children = (Type1, Type2)
+                        let content;
+                        parenthesized!(content in input);
+                        let child_types: Punctuated<Ident, Token![,]> =
+                            content.parse_terminated(Ident::parse, Token![,])?;
+                        args.push(ObjectArg::Children(child_types.into_iter().collect()));
+                    } else {
+                        // single type: children = Type
+                        let child_type: Ident = input.parse()?;
+                        args.push(ObjectArg::Children(vec![child_type]));
+                    }
+                }
+                "metadata" => {
+                    input.parse::<Token![=]>()?;
+                    if input.peek(Paren) {
+                        let content;
+                        parenthesized!(content in input);
+                        let metadata_types: Punctuated<Ident, Token![,]> =
+                            content.parse_terminated(Ident::parse, Token![,])?;
+                        args.push(ObjectArg::Metadata(metadata_types.into_iter().collect()));
+                    } else {
+                        let metadata_type: Ident = input.parse()?;
+                        args.push(ObjectArg::Metadata(vec![metadata_type]));
+                    }
+                }
+                "parent" => {
+                    input.parse::<Token![=]>()?;
+                    let parent_type: Ident = input.parse()?;
+                    args.push(ObjectArg::Parent(parent_type));
+                }
+                "pair" => {
+                    input.parse::<Token![=]>()?;
+                    let pair_type: Ident = input.parse()?;
+                    args.push(ObjectArg::Pair(pair_type));
+                }
+                "page_type" => {
+                    input.parse::<Token![=]>()?;
+                    let page_type_str: Ident = input.parse()?;
+                    let page_type = match page_type_str.to_string().as_str() {
+                        "Key" => PageType::Key,
+                        "Inferred" => PageType::Inferred,
+                        _ => {
+                            return Err(syn::Error::new(
+                                page_type_str.span(),
+                                "Expected 'Key' or 'Inferred'",
+                            ));
                         }
-                        "metadata" => {
-                            let content;
-                            parenthesized!(content in input);
-                            let metadata_types: Punctuated<Ident, Token![,]> =
-                                content.parse_terminated(Ident::parse, Token![,])?;
-                            args.push(ObjectArg::Metadata(metadata_types.into_iter().collect()));
+                    };
+                    args.push(ObjectArg::PageType(page_type));
+                }
+                "sequence" => {
+                    input.parse::<Token![=]>()?;
+                    let seq_str: Ident = input.parse()?;
+                    let seq = match seq_str.to_string().as_str() {
+                        "First" => PairSequenceType::First,
+                        "Last" => PairSequenceType::Last,
+                        "None" => PairSequenceType::None,
+                        _ => {
+                            return Err(syn::Error::new(
+                                seq_str.span(),
+                                "Expected 'First', 'Last', or 'None'",
+                            ));
                         }
-                        "parent" => {
-                            let parent_type: Ident = input.parse()?;
-                            args.push(ObjectArg::Parent(parent_type));
-                        }
-                        "pair" => {
-                            let pair_type: Ident = input.parse()?;
-                            args.push(ObjectArg::Pair(pair_type));
-                        }
-                        "object_type" => {
-                            let object_type: Ident = input.parse()?;
-                            args.push(ObjectArg::Type(object_type));
-                        }
-                        _ => unreachable!(),
+                    };
+                    args.push(ObjectArg::PairSequence(seq));
+                }
+                "patterns" => {
+                    input.parse::<Token![=]>()?;
+                    // patterns = [ Pattern::Pair { first: A::TYPE, second: B::TYPE }, ... ]
+                    if input.peek(Bracket) {
+                        let content;
+                        bracketed!(content in input);
+                        let pattern_exprs: Punctuated<Expr, Token![,]> =
+                            content.parse_terminated(Expr::parse, Token![,])?;
+                        args.push(ObjectArg::Patterns(pattern_exprs.into_iter().collect()));
+                    } else {
+                        return Err(syn::Error::new(
+                            name.span(),
+                            "Unexpected token expected bracket(s)",
+                        ));
                     }
                 }
                 _ => return Err(syn::Error::new(name.span(), "Unknown argument")),
@@ -83,167 +141,127 @@ impl Parse for ObjectArgs {
 pub fn object(args: TokenStream, input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as ObjectArgs);
     let input_struct = parse_macro_input!(input as ItemStruct);
-
     let struct_name = &input_struct.ident;
-    let mut generated_fields = Vec::new();
     let mut generated_impls = Vec::new();
-    let mut generated_structs = Vec::new();
-    let mut object_type_variant = quote! { ObjectType::Inferred };
-    let mut has_explicit_type = false;
+    let mut children_types = Vec::new();
+    let mut metadata_types = Vec::new();
+    let mut parent_type = quote! { () };
+    let mut pair_type = quote! { () };
+    let mut pair_sequence = quote! { PairSequence::None };
+    let mut patterns = Vec::new();
+    let mut page_type = PageType::Inferred;
 
     for arg in args.args {
         match arg {
-            ObjectArg::Root => {
-                object_type_variant = quote! { ObjectType::Root };
-                has_explicit_type = true;
-                generated_impls.push(quote! {
-                    impl Root for #struct_name {}
-                });
-            }
             ObjectArg::Children(child_types) => {
-                if child_types.len() == 1 {
-                    let child_type = &child_types[0];
-                    generated_fields.push(quote! {
-                        pub children: Vec<#child_type>,
-                    });
-                } else {
-                    let child_struct_name = quote::format_ident!("{}Children", struct_name);
-                    let fields = child_types.iter().enumerate().map(|(i, child_type)| {
-                        let field_name = quote::format_ident!("_{}", i);
-                        quote! { pub #field_name: #child_type }
-                    });
+                children_types = child_types;
+                generated_impls.push(quote! {
+                    impl Parent for #struct_name {}
+                });
+            }
+            ObjectArg::Metadata(meta_types) => {
+                metadata_types = meta_types;
+            }
+            ObjectArg::Parent(parent) => {
+                parent_type = quote! { #parent };
 
-                    generated_structs.push(quote! {
-                        pub struct #child_struct_name {
-                            #(#fields),*
-                        }
-                    });
-
-                    generated_fields.push(quote! {
-                        pub children: Vec<#child_struct_name>,
-                    });
-
-                    for child_type in &child_types {
-                        generated_impls.push(quote! {
-                            impl Child<#child_type> for #struct_name {}
-                        });
-                    }
+                generated_impls.push(quote! {
+                    impl Child for #struct_name {}
+                });
+            }
+            ObjectArg::Pair(pair) => {
+                pair_type = quote! { #pair };
+                if matches!(pair_sequence.to_string().as_str(), "PairSequence :: None") {
+                    pair_sequence = quote! { PairSequence::First };
                 }
             }
-            ObjectArg::Type(object_type) => {
-                object_type_variant = match object_type.to_string().as_str() {
-                    "Key" => quote! { ObjectType::Key },
-                    "Inferred" => quote! { ObjectType::Inferred },
-                    _ => {
-                        return syn::Error::new(
-                            object_type.span(),
-                            "Invalid object type. Expected 'Key' or 'Inferred'.",
-                        )
-                        .into_compile_error()
-                        .to_token_stream()
-                        .into();
-                    }
+            ObjectArg::PageType(pt) => {
+                page_type = pt;
+            }
+            ObjectArg::PairSequence(seq) => {
+                pair_sequence = match seq {
+                    PairSequenceType::First => quote! { PairSequence::First },
+                    PairSequenceType::Last => quote! { PairSequence::Last },
+                    PairSequenceType::None => quote! { PairSequence::None },
                 };
-
-                has_explicit_type = true;
-
-                match object_type.to_string().as_str() {
-                    "Key" => {
-                        generated_impls.push(quote! {
-                            impl KeyPage for #struct_name {}
-                        });
-                    }
-                    "Inferred" => {
-                        generated_impls.push(quote! {
-                            impl InferredPage for #struct_name {}
-                        });
-                    }
-                    _ => unreachable!(),
-                }
             }
-            ObjectArg::Metadata(metadata_types) => {
-                if metadata_types.len() > 2 {
-                    return syn::Error::new(
-                        proc_macro2::Span::call_site(),
-                        "Too much metadata, expected only 2 types.",
-                    )
-                    .into_compile_error()
-                    .to_token_stream()
-                    .into();
-                }
-
-                let struct_name = quote::format_ident!("{}Metadata", struct_name);
-                let fields = metadata_types.iter().enumerate().map(|(i, metadata_type)| {
-                    let field_name = quote::format_ident!("_{}", i);
-                    quote! { pub #field_name: #metadata_type }
-                });
-
-                generated_structs.push(quote! {
-                    pub struct #struct_name {
-                        #(#fields),*
-                    }
-                });
-
-                generated_fields.push(quote! {
-                    pub metadata: Vec<#struct_name>,
-                });
-            }
-            ObjectArg::Parent(parent_type) => {
-                generated_fields.push(quote! {
-                    pub parent: Box<#parent_type>,
-                });
-
-                generated_impls.push(quote! {
-                    impl Parent<#struct_name> for #parent_type {}
-                });
-            }
-            ObjectArg::Pair(pair_type) => {
-                generated_impls.push(quote! {
-                    impl PairWith<#pair_type> for #struct_name {
-                        const SEQUENCE: PairSequence = PairSequence::First;
-                    }
-                });
-
-                generated_impls.push(quote! {
-                    impl PairWith<#struct_name> for #pair_type {
-                        const SEQUENCE: PairSequence = PairSequence::Last;
-                    }
-                });
+            ObjectArg::Patterns(pattern_types) => {
+                patterns = pattern_types;
             }
         }
     }
 
-    if !has_explicit_type {
+    match page_type {
+        PageType::Key => {
+            generated_impls.push(quote! {
+                impl KeyPage for #struct_name {}
+            });
+        }
+        PageType::Inferred => {
+            generated_impls.push(quote! {
+                impl InferredPage for #struct_name {}
+            });
+        }
+    }
+
+    // (combine metadata and children, with metadata first)
+    let all_children: Vec<_> = metadata_types.iter().chain(children_types.iter()).collect();
+    let children_array = if all_children.is_empty() {
+        quote! { &[] }
+    } else {
+        quote! { &[#(#all_children::TYPE),*] }
+    };
+
+    let pattern_items = patterns.iter().map(|expr| quote! { #expr });
+    let patterns_array = if patterns.is_empty() {
+        quote! { &[] }
+    } else {
+        quote! { &[#(#pattern_items),*] }
+    };
+
+    if !matches!(pair_type.to_string().as_str(), "()") {
         generated_impls.push(quote! {
-            impl InferredPage for #struct_name {}
+            impl PairWith<#pair_type> for #struct_name {
+                const SEQUENCE: PairSequence = #pair_sequence;
+                const PATTERNS: &'static [Pattern] = #patterns_array;
+            }
         });
     }
 
-    let expanded = quote! {
-        #(#generated_structs)*
+    let object_impl = quote! {
+        impl Object for #struct_name {
+            const CHILDREN: &'static [TypeInformation] = #children_array;
+            const TYPE: TypeInformation = TypeInformation {
+                id: std::any::TypeId::of::<Self>(),
+                ident: stringify!(#struct_name),
+            };
 
-        #[derive(TypeInfo, Default)]
-        pub struct #struct_name {
-            #(#generated_fields)*
+            type Parent = #parent_type;
+            type Pair = #pair_type;
         }
+    };
+
+    let expanded = quote! {
+        #input_struct
+
+        #object_impl
 
         #(#generated_impls)*
-
-
-        impl Object for #struct_name {
-            const OBJECT_TYPE: ObjectType = #object_type_variant;
-        }
     };
 
     TokenStream::from(expanded)
 }
 
-#[proc_macro]
-#[allow(unused_variables)]
-pub fn init(input: TokenStream) -> TokenStream {
-    quote! {
-        #[macro_use]
-        extern crate type_info_derive;
-    }
-    .into()
+#[proc_macro_attribute]
+pub fn root(_args: TokenStream, input: TokenStream) -> TokenStream {
+    let input_struct = parse_macro_input!(input as ItemStruct);
+    let struct_name = &input_struct.ident;
+
+    let expanded = quote! {
+        #input_struct
+
+        impl Root for #struct_name {}
+    };
+
+    TokenStream::from(expanded)
 }
