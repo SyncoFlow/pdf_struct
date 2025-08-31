@@ -56,7 +56,7 @@ impl ConfigBuilder {
     /// Defines the root document.
     pub fn with_root<T>(mut self) -> Self
     where
-        T: Root + Object + 'static,
+        T: Root + 'static,
     {
         let root = InstanstiatedRoot::new();
         self.root = Some(root);
