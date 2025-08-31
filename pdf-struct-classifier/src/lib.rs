@@ -8,43 +8,6 @@ use std::error::Error;
 use std::fmt::{Debug, Display};
 use std::path::PathBuf;
 
-/// A percentage of how confident classification of an image
-/// to a type of T is.
-pub type ConfidenceScore = f32;
-
-/// The result of an attempt to classify an extracted image of a page.
-pub enum ClassificationResult<T, E>
-where
-    E: Error + Debug + Display,
-{
-    /// Highly sure the provided image is of type T/Self >90% confidence
-    Confident(T, ConfidenceScore),
-    /// Probable the provided image is of type T/Self 50-90% confidence
-    Probable(T, ConfidenceScore),
-    /// Uncertain the provided image is of type T/Self <50% confidence
-    Uncertain(ConfidenceScore),
-    /// Failed to classify image.
-    Err(E),
-}
-
-/// Trait implemented onto any document object
-/// that defines a classify method, which will state if a page
-/// is the type of Self
-///
-/// I.e if page 3 is type of Chapter, you would implement this trait onto Chapter
-/// Then implement logic that runs OCR on the image provided for any page.
-/// And then assign a confidence value onto how confident your classification is
-///
-/// This is what the classifier will call constructing a PDF page into a type.  
-pub trait Classify<E>
-where
-    E: Debug + Display + Error,
-{
-    fn classify(img: &[u8]) -> ClassificationResult<Self, E>
-    where
-        Self: Sized;
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum ClassiferError {
     #[error("No key objects were provided!")]
