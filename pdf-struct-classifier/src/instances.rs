@@ -20,7 +20,7 @@ pub struct InstanstiatedPair {
     pub patterns: Vec<Pattern>,
 }
 
-trait AnyClone: Any {
+pub trait AnyClone: Any {
     fn clone_box(&self) -> Box<dyn AnyClone>;
 }
 
