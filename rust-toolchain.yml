@@ -1,4 +1,5 @@
 [toolchain]
 channel = "nightly"
-# Nightly is required because we require type information, 
-# A lot of type information functionality is locked behind nightly releases. 
+# Nightly is required because we need a basic form of reflection, features like 
+#![feature(associated_type_defaults)] are locked behind nightly therefore we require
+# using nightly to build. 

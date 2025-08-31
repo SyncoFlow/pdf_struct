@@ -6,6 +6,5 @@ edition = "2024"
 [dependencies]
 pdf-struct-macros = { path = "../pdf-struct-macros" }
 pdf-struct-traits = { path = "../pdf-struct-traits" }
-pdf-struct-classifer = { path = "../pdf-struct-classifer" }
-type-info = "0.2.1"
-type-info-derive = "0.2.0"
+pdf-struct-classifier = { path = "../pdf-struct-classifier" }
+thiserror = "2.0.16"

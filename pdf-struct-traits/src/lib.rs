@@ -1,7 +1,5 @@
 #![feature(associated_type_defaults)]
 
-extern crate type_info;
-
 use std::any::TypeId;
 use std::error::Error;
 use std::fmt::{Debug, Display};
