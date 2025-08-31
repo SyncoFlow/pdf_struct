@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Debug;
 use std::fmt::Display;
-use std::mem::size_of;
 use std::rc::Rc;
 
 /// Concretely defines an object as a Pair  
@@ -76,10 +75,6 @@ impl InstanstiatedObject {
             return cached.clone();
         }
 
-        if size_of::<T>() == 0 {
-            panic!("Attempted to instantiate an object without any data!");
-        }
-
         let obj = Rc::new(Self::from_obj_internal::<T, E>(cache));
 
         cache.insert(T::TYPE.id, obj.clone());
@@ -102,12 +97,16 @@ impl InstanstiatedObject {
         Self {
             parent,
             children: vec![],
-            pair: if size_of::<T::Pair>() == 0 {
+            pair: if T::Pair::TYPE.ident == "()" {
                 None
             } else {
                 Some(InstanstiatedPair {
                     pair_type_info: T::Pair::TYPE,
-                    sequence: T::Pair::SEQUENCE,
+                    sequence: match T::Pair::SEQUENCE {
+                        PairSequence::First => PairSequence::Last,
+                        PairSequence::Last => PairSequence::First,
+                        PairSequence::None => PairSequence::None,
+                    },
                     patterns: T::Pair::PATTERNS.to_vec(),
                 })
             },
@@ -282,13 +281,42 @@ impl InstanstiatedRoot {
 
     /// Connect all parent-child relationships based on the cache
     pub fn connect_relationships(&mut self) {
-        let cache_clone = self.cache.clone();
+        let snapshot = self.cache.clone();
 
-        for obj in self.cache.values_mut() {
-            if let Some(obj_mut) = Rc::get_mut(obj) {
-                obj_mut.collect_children_from_cache(&cache_clone);
+        let mut children_id_map: HashMap<TypeId, Vec<TypeId>> = HashMap::new();
+        for child in snapshot.values() {
+            if let Some(parent_rc) = child.parent.as_ref() {
+                children_id_map
+                    .entry(parent_rc.obj_type.id)
+                    .or_default()
+                    .push(child.obj_type.id);
             }
         }
+
+        let mut new_cache: ObjectCache = HashMap::new();
+        for (id, rc) in snapshot.into_iter() {
+            let mut obj = (*rc).clone();
+            obj.children = Vec::new();
+            new_cache.insert(id, Rc::new(obj));
+        }
+
+        // Populate children by iterating over a collected list of keys to avoid
+        // borrowing/move conflicts while we replace entries in the map.
+        let keys: Vec<TypeId> = new_cache.keys().cloned().collect();
+        for id in keys {
+            if let Some(inter_rc) = new_cache.get(&id).cloned() {
+                let mut obj = (*inter_rc).clone();
+                if let Some(child_ids) = children_id_map.get(&id) {
+                    obj.children = child_ids
+                        .iter()
+                        .filter_map(|cid| new_cache.get(cid).cloned())
+                        .collect();
+                }
+                new_cache.insert(id, Rc::new(obj));
+            }
+        }
+
+        self.cache = new_cache;
     }
 }
 
