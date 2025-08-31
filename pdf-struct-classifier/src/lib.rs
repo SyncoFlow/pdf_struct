@@ -1,12 +1,17 @@
+#![allow(unused)] // TODO: remove after finishing Classifier
+
 pub mod config;
 pub mod instances;
 
+#[cfg(test)]
+mod tests; 
+
+use pdf_struct_traits::ClassificationResult;
 
 use crate::config::Config;
 use std::any::Any;
 use std::collections::HashMap;
-use std::error::Error;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use std::path::PathBuf;
 
 #[derive(thiserror::Error, Debug)]
@@ -15,21 +20,15 @@ pub enum ClassiferError {
     NoKeysProvided,
 }
 
-pub struct Classifier<E>
-where
-    E: std::error::Error + Debug + Display + Send + Sync + 'static,
-{
-    config: Config<E>,
+pub struct Classifier {
+    config: Config,
     path: PathBuf,
     context: HashMap<i32, ClassificationResult<Box<dyn Any>, ClassiferError>>,
     pages: i32,
 }
 
-impl<E> Classifier<E>
-where
-    E: std::error::Error + Debug + Display + Send + Sync + 'static,
-{
-    pub fn new(config: Config<E>, path: PathBuf) -> Self {
+impl Classifier {
+    pub fn new(config: Config, path: PathBuf) -> Self {
         Self {
             config,
             path,
@@ -54,7 +53,7 @@ where
             Some(s) => s,
         };
 
-        if let Some(classifier) = self.config.key_classifiers.get(first) {}
+        // if let Some(classifier) = self.config.key_classifiers.get(first) {}
 
         Ok(())
     }
