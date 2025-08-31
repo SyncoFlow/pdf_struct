@@ -1,5 +1,6 @@
-pub mod pattern;
-pub mod config; 
+pub mod config;
+pub mod instances;
+
 
 use crate::config::Config;
 use std::any::Any;
