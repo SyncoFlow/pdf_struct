@@ -4,7 +4,7 @@ pub mod config;
 pub mod instances;
 
 #[cfg(test)]
-mod tests; 
+mod tests;
 
 use pdf_struct_traits::ClassificationResult;
 
@@ -20,6 +20,13 @@ pub enum ClassiferError {
     NoKeysProvided,
 }
 
+/// Classifier is meant to bridge the context we are provided from the user
+/// within the Config with the actual physical extraction of a document.
+///
+/// It will single-threadedly iterate over each page within the document, and as we classify
+/// each page into the type they are expected to be, we call T::extract on a seperate thread.
+///
+/// For more information regarding this see [issue #2](https://github.com/SyncoFlow/pdf_struct/issues/2)
 pub struct Classifier {
     config: Config,
     path: PathBuf,
@@ -38,23 +45,18 @@ impl Classifier {
     }
 
     pub fn begin(&self) -> Result<(), ClassiferError> {
-        Ok(())
+        todo!()
     }
 
+    /// We specify chunks as each unique key object that is a child of root.
+    /// (child as in first-generation child, nothing that is a child of a child of root is counted.)
+    /// I.e:
+    ///     Root
+    ///       |- Chapter
+    ///           |- SubChapter
+    ///       |- SomeOtherKey
+    ///           |- SomeOtherKeysChild
     fn classify_chunk(&self, start_page: i32) -> Result<(), ClassiferError> {
-        type Error = ClassiferError;
-
-        if self.config.keys.is_empty() {
-            return Err(Error::NoKeysProvided);
-        }
-
-        let first = match self.config.keys.first() {
-            None => return Err(Error::NoKeysProvided),
-            Some(s) => s,
-        };
-
-        // if let Some(classifier) = self.config.key_classifiers.get(first) {}
-
-        Ok(())
+        todo!()
     }
 }

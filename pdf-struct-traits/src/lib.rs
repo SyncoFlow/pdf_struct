@@ -89,34 +89,51 @@ pub trait Child: Object {}
 pub type ConfidenceScore = f32;
 
 /// The result of an attempt to classify an extracted image of a page.
+/// Where T represents the shared data returned by the classification,
+/// and E represents an Error type.
 pub enum ClassificationResult<T, E>
 where
+    T: Send + Sync,
     E: Error + Debug + Display,
 {
     /// Highly sure the provided image is of type T/Self >90% confidence
-    Confident(T, ConfidenceScore),
+    Confident(ConfidenceScore, T),
     /// Probable the provided image is of type T/Self 50-90% confidence
-    Probable(T, ConfidenceScore),
+    Probable(ConfidenceScore, T),
     /// Uncertain the provided image is of type T/Self <50% confidence
     Uncertain(ConfidenceScore),
     /// Failed to classify image.
     Err(E),
 }
 
-/// Trait implemented onto any document object
-/// that defines a classify method, which will state if a page
-/// is the type of Self
+/// Trait that defines how to classify a page as Self
+/// Classify differs from Extract, because Classify is meant to handle
+/// lighter operations upon key positions upon the page that will indicate it is of type Self.
+/// For example a big text block that says "CHAPTER {num}" on a new chapter page.
 ///
-/// I.e if page 3 is type of Chapter, you would implement this trait onto Chapter
-/// Then implement logic that runs OCR on the image provided for any page.
-/// And then assign a confidence value onto how confident your classification is
-///
-/// This is what the classifier will call constructing a PDF page into a type.  
+/// For any information that needs to be shared, please define a SharedData type,
+/// then when returning [confident](ClassificationResult::Confident) or [probable](ClassificationResult::Probable)
+/// add whatever shared information as a member of your type.
+/// Pdf-struct will then pass it to Self::extract, where you can access your information
+/// to properly construct the page into Self, with other information you extract.  
 pub trait Classify {
-    fn classify<E>(img: &[u8]) -> ClassificationResult<Self, E>
+    type SharedData: Send + Sync;
+
+    fn classify<E>(img: &[u8]) -> ClassificationResult<Self::SharedData, E>
     where
-        Self: Sized,
         E: Debug + Display + Error;
+}
+
+/// Trait that defines how to construct a page into Self
+/// Extract differs from Classify, because Extract is meant to
+/// actually extract data within a page's image into memory.
+/// Please see [issue #1](https://github.com/SyncoFlow/pdf_struct/issues/1) for more information.  
+/// When extracting a page, parallelization is applied to each available extraction thread.
+pub trait Extract: Classify
+where
+    Self: Sized,
+{
+    fn extract<E>(img: &[u8], shared: Self::SharedData) -> Result<Self, E>;
 }
 
 impl Parent for () {}
@@ -134,6 +151,8 @@ impl Object for () {
     type Parent = ();
 }
 impl Classify for () {
+    type SharedData = ();
+
     #[allow(unused)]
     fn classify<E>(img: &[u8]) -> ClassificationResult<Self, E>
     where
@@ -141,6 +160,11 @@ impl Classify for () {
         E: Debug + Display + Error,
     {
         panic!("Attempted to classify on an object that implements Classify as ()!")
+    }
+}
+impl Extract for () {
+    fn extract<E>(img: &[u8], shared: Self::SharedData) -> Result<Self, E> {
+        panic!("Attempted to extract upon ()")
     }
 }
 
