@@ -1,9 +1,9 @@
 #![allow(unused)]
 
 use pdf_struct_macros::{object, root};
-use pdf_struct_traits::Classify;
 use pdf_struct_traits::Pattern;
 use pdf_struct_traits::*;
+use pdf_struct_traits::{Classify, Extract};
 
 #[object(page_type = Inferred, parent = Chapter)]
 #[derive(Debug, Clone)]
@@ -44,11 +44,15 @@ struct Document;
 #[derive(Debug, thiserror::Error)]
 enum Error {}
 
-macro_rules! impl_classify {
+struct Shared;
+
+macro_rules! impl_classify_and_extract {
     ($impl_for:ty) => {
         impl Classify for $impl_for {
+            type SharedData = Shared;
+
             #[allow(unused_variables)]
-            fn classify<E>(img: &[u8]) -> pdf_struct_traits::ClassificationResult<Self, E>
+            fn classify<E>(img: &[u8]) -> pdf_struct_traits::ClassificationResult<Shared, E>
             where
                 E: std::fmt::Debug + std::fmt::Display + std::error::Error,
                 Self: Sized,
@@ -56,16 +60,27 @@ macro_rules! impl_classify {
                 // do some OCR things
                 let ocr_confidence = 100.0;
 
-                pdf_struct_traits::ClassificationResult::Confident(Self {}, ocr_confidence)
+                let shared = Shared {};
+                pdf_struct_traits::ClassificationResult::Confident(ocr_confidence, shared)
+            }
+        }
+
+        impl Extract for $impl_for {
+            #[allow(unused_variables)]
+            fn extract<E>(img: &[u8], shared: Self::SharedData) -> Result<Self, E>
+            where
+                Self: Sized,
+            {
+                Ok(Self {})
             }
         }
     };
 }
-impl_classify!(Chapter);
-impl_classify!(SubChapter);
-impl_classify!(Diagram);
-impl_classify!(DataTable);
-impl_classify!(ChapterMetadata);
+impl_classify_and_extract!(Chapter);
+impl_classify_and_extract!(SubChapter);
+impl_classify_and_extract!(Diagram);
+impl_classify_and_extract!(DataTable);
+impl_classify_and_extract!(ChapterMetadata);
 
 #[test]
 fn test() {
