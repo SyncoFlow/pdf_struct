@@ -26,7 +26,6 @@ impl Pattern {
     where
         T: PairWith<U>,
         U: PairWith<T>,
-        // extra impls
         T: Object + 'static,
         U: Object + 'static,
     {
@@ -178,7 +177,7 @@ pub struct TypeInformation {
 /// within a PDF document.
 pub trait Object
 where
-    Self: Sized + Classify,
+    Self: Sized + Classify + Extract,
 {
     const CHILDREN: &'static [TypeInformation] = &[];
     const TYPE: TypeInformation;
