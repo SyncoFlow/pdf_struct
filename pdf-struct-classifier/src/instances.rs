@@ -29,41 +29,50 @@ impl<T: Any + Clone> AnyClone for T {
     }
 }
 
-/// Represents any struct that implements [Object]
+/// Where:
+///     T is shared data
+///     E is error
+type ClassificationMethod<T, E> = fn(&[u8]) -> ClassificationResult<T, E>;
+
+/// Where:
+///     T is shared data
+///     E is error
+///     S is Self (the constructed object)
+type ExtractionMethod<T, E, S> = fn(&[u8], T) -> Result<S, E>;
+
+/// Cache holding information of each  
+type ObjectCache = HashMap<TypeId, Rc<InstanstiatedObject>>;
+
+/// Crate-level error that can only be called when attempting
+/// to cast into a [ClassificationMethod] or [ExtractionMethod]
+#[derive(Debug)]
+pub(crate) enum CastError {
+    TypeMismatch { expected: TypeId, actual: TypeId },
+}
+
+/// Represents a type that implements [pdf_struct_traits::Object] at runtime.
 pub struct InstanstiatedObject {
     pub parent: Option<Rc<InstanstiatedObject>>,
     pub children: Vec<Rc<InstanstiatedObject>>,
     pub pair: Option<InstanstiatedPair>,
-    pub classification_method: Box<dyn AnyClone>,
-    pub obj_type: TypeInformation,
-    pub expected_children: Vec<TypeInformation>,
+    /// Box<ClassificationMethod<T, E>;
+    /// Where T is a type shared between Classify and Extract
+    /// And E is an error type.
+    /// ! This member should NOT be manually set or casted into.
+    /// ! Utilize [InstanstiatedObject::cast_classification]
+    pub(crate) classification_method: Box<dyn AnyClone>,
+    /// Box<ExtractionMethod<T, E>;
+    /// Where T is a type shared between Classify and Extract
+    /// And E is an error type.
+    /// ! This member should NOT be manually set or casted into.
+    /// ! Utilize [InstanstiatedObject::cast_extraction]
+    pub(crate) extraction_method: Box<dyn AnyClone>,
+    /// Reflected information of the type defined as an object
+    /// Which Self represents at runtime.
+    pub(crate) obj_type: TypeInformation,
+    /// The reflected type information for the children of this type.
+    pub(crate) expected_children: Vec<TypeInformation>,
 }
-
-impl Clone for InstanstiatedObject {
-    fn clone(&self) -> Self {
-        Self {
-            parent: self.parent.clone(),
-            children: self.children.clone(),
-            pair: self.pair.clone(),
-            classification_method: self.classification_method.clone_box(),
-            obj_type: self.obj_type.clone(),
-            expected_children: self.expected_children.clone(),
-        }
-    }
-}
-
-// Make InstanstiatedPair cloneable too
-impl Clone for InstanstiatedPair {
-    fn clone(&self) -> Self {
-        Self {
-            pair_type_info: self.pair_type_info.clone(),
-            sequence: self.sequence.clone(),
-            patterns: self.patterns.clone(),
-        }
-    }
-}
-
-type ObjectCache = HashMap<TypeId, Rc<InstanstiatedObject>>;
 
 impl InstanstiatedObject {
     pub fn from_obj_with_cache<T, E>(cache: &mut ObjectCache) -> Rc<Self>
@@ -82,6 +91,54 @@ impl InstanstiatedObject {
         obj
     }
 
+    /// Casts T and E into fn<T, E>(&\[u8]) -> ClassificationResult<T, E>;
+    pub(crate) fn cast_classification<T, E>(&self) -> Result<ClassificationMethod<T, E>, CastError>
+    where
+        T: Send + Sync + 'static,
+        E: Error + Debug + Display + 'static,
+    {
+        let expected_type_id = TypeId::of::<fn(&[u8]) -> ClassificationResult<T, E>>();
+        let actual_type_id = self.classification_method.type_id();
+
+        let func_ptr =
+            (self.classification_method.as_ref() as &dyn Any).downcast_ref::<fn(
+                &[u8],
+            )
+                -> ClassificationResult<T, E>>(
+            );
+
+        match func_ptr {
+            Some(f) => Ok(*f),
+            None => Err(CastError::TypeMismatch {
+                expected: expected_type_id,
+                actual: actual_type_id,
+            }),
+        }
+    }
+
+    /// Casts T, E, S into fn(&[u8], T) -> Result<S, E>;
+    pub(crate) fn cast_extraction<T, E, S>(&self) -> Result<ExtractionMethod<T, E, S>, CastError>
+    where
+        T: Send + Sync + 'static,
+        E: Error + Debug + Display + 'static,
+        S: Sized + 'static,
+    {
+        let expected_type_id = TypeId::of::<fn(&[u8], T) -> Result<S, E>>();
+        let actual_type_id = self.classification_method.type_id();
+
+        let func_ptr =
+            (self.classification_method.as_ref() as &dyn Any)
+                .downcast_ref::<fn(&[u8], T) -> Result<S, E>>();
+
+        match func_ptr {
+            Some(f) => Ok(*f),
+            None => Err(CastError::TypeMismatch {
+                expected: expected_type_id,
+                actual: actual_type_id,
+            }),
+        }
+    }
+
     /// Internal method that does the actual construction
     fn from_obj_internal<T, E>(cache: &mut ObjectCache) -> Self
     where
@@ -94,23 +151,30 @@ impl InstanstiatedObject {
             Some(Self::from_obj_with_cache::<T::Parent, E>(cache))
         };
 
+        let pair = if T::Pair::TYPE.ident == "()" {
+            None
+        } else {
+            Some(InstanstiatedPair {
+                pair_type_info: T::Pair::TYPE,
+                sequence: match T::Pair::SEQUENCE {
+                    PairSequence::First => PairSequence::Last,
+                    PairSequence::Last => PairSequence::First,
+                    PairSequence::None => PairSequence::None,
+                },
+                patterns: T::Pair::PATTERNS.to_vec(),
+            })
+        };
+
         Self {
             parent,
             children: vec![],
-            pair: if T::Pair::TYPE.ident == "()" {
-                None
-            } else {
-                Some(InstanstiatedPair {
-                    pair_type_info: T::Pair::TYPE,
-                    sequence: match T::Pair::SEQUENCE {
-                        PairSequence::First => PairSequence::Last,
-                        PairSequence::Last => PairSequence::First,
-                        PairSequence::None => PairSequence::None,
-                    },
-                    patterns: T::Pair::PATTERNS.to_vec(),
-                })
-            },
-            classification_method: Box::new(T::classify::<E> as fn(&[u8]) -> _),
+            pair,
+            classification_method: Box::new(
+                T::classify::<E> as ClassificationMethod<<T as Classify>::SharedData, E>,
+            ),
+            extraction_method: Box::new(
+                T::extract::<E> as ExtractionMethod<<T as Classify>::SharedData, E, T>,
+            ),
             obj_type: T::TYPE,
             expected_children: T::CHILDREN.to_vec(),
         }
@@ -199,6 +263,37 @@ impl InstanstiatedObject {
     /// Get all possible child types
     pub fn get_expected_child_types(&self) -> &[TypeInformation] {
         &self.expected_children
+    }
+}
+
+impl Clone for InstanstiatedObject {
+    fn clone(&self) -> Self {
+        Self {
+            parent: self.parent.clone(),
+            children: self.children.clone(),
+            pair: self.pair.clone(),
+            classification_method: self.classification_method.clone_box(),
+            extraction_method: self.extraction_method.clone_box(),
+            obj_type: self.obj_type.clone(),
+            expected_children: self.expected_children.clone(),
+        }
+    }
+}
+
+/// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::PairWith]
+pub struct InstanstiatedPair {
+    pub pair_type_info: TypeInformation,
+    pub sequence: PairSequence,
+    pub patterns: Vec<Pattern>,
+}
+
+impl Clone for InstanstiatedPair {
+    fn clone(&self) -> Self {
+        Self {
+            pair_type_info: self.pair_type_info.clone(),
+            sequence: self.sequence.clone(),
+            patterns: self.patterns.clone(),
+        }
     }
 }
 
