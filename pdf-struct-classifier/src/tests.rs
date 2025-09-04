@@ -51,6 +51,12 @@ impl Classify for Chapter {
     }
 }
 
+impl Extract for Chapter {
+    fn extract<E>(img: &[u8], shared: Self::SharedData) -> Result<Self, E> {
+        Ok(Self {})
+    }
+}
+
 impl Object for Chapter {
     const CHILDREN: &'static [TypeInformation] = &[SubChapter::TYPE];
     const TYPE: TypeInformation = TypeInformation {
@@ -81,6 +87,12 @@ impl Classify for SubChapter {
     }
 }
 
+impl Extract for SubChapter {
+    fn extract<E>(img: &[u8], shared: Self::SharedData) -> Result<Self, E> {
+        Ok(Self {})
+    }
+}
+
 impl Object for SubChapter {
     const CHILDREN: &'static [TypeInformation] = &[Diagram::TYPE, DataTable::TYPE];
     const TYPE: TypeInformation = TypeInformation {
@@ -107,6 +119,12 @@ impl Classify for Diagram {
         E: Debug + Display + Error,
     {
         ClassificationResult::Probable(0.75, Shared)
+    }
+}
+
+impl Extract for Diagram {
+    fn extract<E>(img: &[u8], shared: Self::SharedData) -> Result<Self, E> {
+        Ok(Self {})
     }
 }
 
@@ -141,6 +159,12 @@ impl Classify for DataTable {
         E: Debug + Display + Error,
     {
         ClassificationResult::Probable(0.80, Shared)
+    }
+}
+
+impl Extract for DataTable {
+    fn extract<E>(img: &[u8], shared: Self::SharedData) -> Result<Self, E> {
+        Ok(Self {})
     }
 }
 
