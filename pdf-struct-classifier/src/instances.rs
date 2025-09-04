@@ -80,7 +80,11 @@ impl InstanstiatedObject {
     }
 
     /// Casts T and E into fn<T, E>(&\[u8]) -> ClassificationResult<T, E>;
-    pub(crate) fn cast_classification<T, E>(&self) -> Result<ClassificationMethod<T, E>, CastError>
+    /// This method is unsafe because [InstanstiatedObject::classification_method]
+    /// may not match the expected TypeId to cast back into a concrete [ClassificationMethod]
+    pub(crate) unsafe fn cast_classification<T, E>(
+        &self,
+    ) -> Result<ClassificationMethod<T, E>, CastError>
     where
         T: Send + Sync + 'static,
         E: Error + Debug + Display + 'static,
@@ -104,8 +108,12 @@ impl InstanstiatedObject {
         }
     }
 
-    /// Casts T, E, S into fn(&[u8], T) -> Result<S, E>;
-    pub(crate) fn cast_extraction<T, E, S>(&self) -> Result<ExtractionMethod<T, E, S>, CastError>
+    /// Casts T, E, S into fn(&\[u8], T) -> Result<S, E>;
+    /// This method is unsafe because [InstanstiatedObject::extraction_method]
+    /// may not match the expected TypeId to cast back into a concrete [ExtractionMethod]
+    pub(crate) unsafe fn cast_extraction<T, E, S>(
+        &self,
+    ) -> Result<ExtractionMethod<T, E, S>, CastError>
     where
         T: Send + Sync + 'static,
         E: Error + Debug + Display + 'static,
@@ -452,11 +460,11 @@ mod tests {
 
     #[test]
     fn test_classification_and_extraction_casts() {
-        use crate::instances::{
-            AnyClone, ClassificationMethod, ExtractionMethod, InstanstiatedObject,
-        };
-        use pdf_struct_traits::TypeInformation;
+        use super::*;
+        use pdf_struct_traits::*;
         use std::any::TypeId;
+        use std::error::Error;
+        use std::fmt::Display;
 
         #[derive(Debug)]
         struct SharedData;
@@ -464,16 +472,16 @@ mod tests {
         struct Constructed;
         #[derive(Debug)]
         struct MyError;
-        impl std::fmt::Display for MyError {
+        impl Display for MyError {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "my error")
             }
         }
-        impl std::error::Error for MyError {}
+        impl Error for MyError {}
 
         // fn(&[u8]) -> ClassificationResult<SharedData, MyError>
-        fn classify_fn(_: &[u8]) -> pdf_struct_traits::ClassificationResult<SharedData, MyError> {
-            pdf_struct_traits::ClassificationResult::Confident(90.0, SharedData)
+        fn classify_fn(_: &[u8]) -> ClassificationResult<SharedData, MyError> {
+            ClassificationResult::Confident(90.0, SharedData)
         }
 
         // fn(&[u8], SharedData) -> Result<Constructed, MyError>
@@ -483,8 +491,6 @@ mod tests {
 
         let classification_method =
             Box::new(classify_fn as ClassificationMethod<SharedData, MyError>) as Box<dyn AnyClone>;
-
-        // dbg!(classification_method.type_id());
 
         let obj = InstanstiatedObject {
             parent: None,
@@ -501,26 +507,26 @@ mod tests {
             expected_children: vec![],
         };
 
-        // dbg!(obj.classification_method.type_id());
+        unsafe {
+            let got_classify = obj
+                .cast_classification::<SharedData, MyError>()
+                .expect("classification cast failed");
+            let got_ptr = got_classify as *const ();
+            let want_ptr = classify_fn as *const ();
+            assert_eq!(
+                got_ptr, want_ptr,
+                "classification function pointer mismatch"
+            );
 
-        let got_classify = obj
-            .cast_classification::<SharedData, MyError>()
-            .expect("classification cast failed");
-        let got_ptr = got_classify as *const ();
-        let want_ptr = classify_fn as *const ();
-        assert_eq!(
-            got_ptr, want_ptr,
-            "classification function pointer mismatch"
-        );
-
-        let got_extract = obj
-            .cast_extraction::<SharedData, MyError, Constructed>()
-            .expect("extraction cast failed");
-        let got_e_ptr = got_extract as *const ();
-        let want_e_ptr = extract_fn as *const ();
-        assert_eq!(
-            got_e_ptr, want_e_ptr,
-            "extraction function pointer mismatch"
-        );
+            let got_extract = obj
+                .cast_extraction::<SharedData, MyError, Constructed>()
+                .expect("extraction cast failed");
+            let got_e_ptr = got_extract as *const ();
+            let want_e_ptr = extract_fn as *const ();
+            assert_eq!(
+                got_e_ptr, want_e_ptr,
+                "extraction function pointer mismatch"
+            );
+        }
     }
 }
