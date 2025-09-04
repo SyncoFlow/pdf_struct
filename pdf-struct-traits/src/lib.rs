@@ -152,8 +152,7 @@ impl Object for () {
 impl Classify for () {
     type SharedData = ();
 
-    #[allow(unused)]
-    fn classify<E>(img: &[u8]) -> ClassificationResult<Self, E>
+    fn classify<E>(_: &[u8]) -> ClassificationResult<Self, E>
     where
         Self: Sized,
         E: Debug + Display + Error,
@@ -162,7 +161,7 @@ impl Classify for () {
     }
 }
 impl Extract for () {
-    fn extract<E>(img: &[u8], shared: Self::SharedData) -> Result<Self, E> {
+    fn extract<E>(_: &[u8], _: Self::SharedData) -> Result<Self, E> {
         panic!("Attempted to extract upon ()")
     }
 }
