@@ -126,9 +126,8 @@ impl InstanstiatedObject {
         let expected_type_id = TypeId::of::<fn(&[u8], T) -> Result<S, E>>();
         let actual_type_id = self.classification_method.type_id();
 
-        let func_ptr =
-            (self.classification_method.as_ref() as &dyn Any)
-                .downcast_ref::<fn(&[u8], T) -> Result<S, E>>();
+        let func_ptr = (self.extraction_method.as_ref() as &dyn Any)
+            .downcast_ref::<fn(&[u8], T) -> Result<S, E>>();
 
         match func_ptr {
             Some(f) => Ok(*f),
@@ -458,5 +457,83 @@ impl InstanstiatedInferredPage {
 impl From<Rc<InstanstiatedObject>> for InstanstiatedInferredPage {
     fn from(value: Rc<InstanstiatedObject>) -> Self {
         Self { 0: value }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_classification_and_extraction_casts() {
+        use crate::instances::{
+            AnyClone, ClassificationMethod, ExtractionMethod, InstanstiatedObject,
+        };
+        use pdf_struct_traits::TypeInformation;
+        use std::any::TypeId;
+
+        #[derive(Debug)]
+        struct SharedData;
+        #[derive(Debug)]
+        struct Constructed;
+        #[derive(Debug)]
+        struct MyError;
+        impl std::fmt::Display for MyError {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "my error")
+            }
+        }
+        impl std::error::Error for MyError {}
+
+        // fn(&[u8]) -> ClassificationResult<SharedData, MyError>
+        fn classify_fn(_: &[u8]) -> pdf_struct_traits::ClassificationResult<SharedData, MyError> {
+            pdf_struct_traits::ClassificationResult::Confident(90.0, SharedData)
+        }
+
+        // fn(&[u8], SharedData) -> Result<Constructed, MyError>
+        fn extract_fn(_: &[u8], _s: SharedData) -> Result<Constructed, MyError> {
+            Ok(Constructed)
+        }
+
+        let classification_method =
+            Box::new(classify_fn as ClassificationMethod<SharedData, MyError>) as Box<dyn AnyClone>;
+
+        // dbg!(classification_method.type_id());
+
+        let obj = InstanstiatedObject {
+            parent: None,
+            children: vec![],
+            pair: None,
+            classification_method,
+            extraction_method: Box::new(
+                extract_fn as ExtractionMethod<SharedData, MyError, Constructed>,
+            ) as Box<dyn AnyClone>,
+            obj_type: TypeInformation {
+                id: TypeId::of::<()>(),
+                ident: "Test",
+            },
+            expected_children: vec![],
+        };
+
+        // dbg!(obj.classification_method.type_id());
+
+        let got_classify = obj
+            .cast_classification::<SharedData, MyError>()
+            .expect("classification cast failed");
+        let got_ptr = got_classify as *const ();
+        let want_ptr = classify_fn as *const ();
+        assert_eq!(
+            got_ptr, want_ptr,
+            "classification function pointer mismatch"
+        );
+
+        let got_extract = obj
+            .cast_extraction::<SharedData, MyError, Constructed>()
+            .expect("extraction cast failed");
+        let got_e_ptr = got_extract as *const ();
+        let want_e_ptr = extract_fn as *const ();
+        assert_eq!(
+            got_e_ptr, want_e_ptr,
+            "extraction function pointer mismatch"
+        );
     }
 }
