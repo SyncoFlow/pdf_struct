@@ -1,25 +1,13 @@
-use pdf_struct_traits::InferredPage;
-use pdf_struct_traits::KeyPage;
-use pdf_struct_traits::Object;
-use pdf_struct_traits::Pattern;
-use pdf_struct_traits::TypeInformation;
-use pdf_struct_traits::{PairSequence, PairWith};
-use std::any::Any;
-use std::any::TypeId;
+use pdf_struct_traits::*;
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt::Debug;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 use std::rc::Rc;
 
-/// Concretely defines an object as a Pair  
-pub struct InstanstiatedPair {
-    pub pair_type_info: TypeInformation,
-    pub sequence: PairSequence,
-    pub patterns: Vec<Pattern>,
-}
-
 pub trait AnyClone: Any {
+    /// Deep-clones the underlying data within a Box
+    /// Or in other words, clones T within Box<T>.
     fn clone_box(&self) -> Box<dyn AnyClone>;
 }
 
@@ -124,7 +112,7 @@ impl InstanstiatedObject {
         S: Sized + 'static,
     {
         let expected_type_id = TypeId::of::<fn(&[u8], T) -> Result<S, E>>();
-        let actual_type_id = self.classification_method.type_id();
+        let actual_type_id = self.extraction_method.type_id();
 
         let func_ptr = (self.extraction_method.as_ref() as &dyn Any)
             .downcast_ref::<fn(&[u8], T) -> Result<S, E>>();
@@ -341,7 +329,7 @@ impl InstanstiatedObjectBuilder {
     }
 }
 
-/// Represents any struct that implements [Root]
+/// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::Root]
 pub struct InstanstiatedRoot {
     pub children: Vec<Rc<InstanstiatedObject>>,
     pub cache: ObjectCache,
@@ -414,7 +402,7 @@ impl InstanstiatedRoot {
     }
 }
 
-/// Concretely defines an Object as a KeyPage
+/// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::KeyPage]
 pub struct InstanstiatedKeyPage(Rc<InstanstiatedObject>);
 
 impl InstanstiatedKeyPage {
@@ -430,14 +418,13 @@ impl InstanstiatedKeyPage {
         &self.0
     }
 }
-
 impl From<Rc<InstanstiatedObject>> for InstanstiatedKeyPage {
     fn from(value: Rc<InstanstiatedObject>) -> Self {
         Self { 0: value }
     }
 }
 
-/// Concretely defines an Object as an InferredPage
+/// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::InferredPage]
 pub struct InstanstiatedInferredPage(Rc<InstanstiatedObject>);
 
 impl InstanstiatedInferredPage {
