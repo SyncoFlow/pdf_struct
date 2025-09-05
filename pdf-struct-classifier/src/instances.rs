@@ -1,9 +1,10 @@
 use pdf_struct_traits::*;
 use std::any::{Any, TypeId};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 pub trait AnyClone: Any {
     /// Deep-clones the underlying data within a Box
@@ -42,7 +43,6 @@ pub(crate) enum CastError {
 pub struct InstanstiatedObject {
     pub parent: Option<Rc<InstanstiatedObject>>,
     pub children: Vec<Rc<InstanstiatedObject>>,
-    pub pair: Option<InstanstiatedPair>,
     /// Box<ClassificationMethod<T, E>;
     /// Where T is a type shared between Classify and Extract
     /// And E is an error type.
@@ -146,24 +146,9 @@ impl InstanstiatedObject {
             Some(Self::from_obj_with_cache::<T::Parent, E>(cache))
         };
 
-        let pair = if T::Pair::TYPE.ident == "()" {
-            None
-        } else {
-            Some(InstanstiatedPair {
-                pair_type_info: T::Pair::TYPE,
-                sequence: match T::Pair::SEQUENCE {
-                    PairSequence::First => PairSequence::Last,
-                    PairSequence::Last => PairSequence::First,
-                    PairSequence::None => PairSequence::None,
-                },
-                patterns: T::Pair::PATTERNS.to_vec(),
-            })
-        };
-
         Self {
             parent,
             children: vec![],
-            pair,
             classification_method: Box::new(
                 T::classify::<E> as ClassificationMethod<<T as Classify>::SharedData, E>,
             ),
@@ -235,19 +220,6 @@ impl InstanstiatedObject {
         }
     }
 
-    /// Get pair information without creating circular references
-    pub fn get_pair_info(&self) -> Option<&InstanstiatedPair> {
-        self.pair.as_ref()
-    }
-
-    /// Get the actual pair object from cache if it exists
-    pub fn get_pair_object(&self, cache: &ObjectCache) -> Option<Rc<InstanstiatedObject>> {
-        self.pair
-            .as_ref()
-            .and_then(|pair| cache.get(&pair.pair_type_info.id))
-            .cloned()
-    }
-
     /// Check if this object can have a specific child type
     pub fn can_have_child(&self, child_type_id: TypeId) -> bool {
         self.expected_children
@@ -266,7 +238,6 @@ impl Clone for InstanstiatedObject {
         Self {
             parent: self.parent.clone(),
             children: self.children.clone(),
-            pair: self.pair.clone(),
             classification_method: self.classification_method.clone_box(),
             extraction_method: self.extraction_method.clone_box(),
             obj_type: self.obj_type.clone(),
@@ -277,17 +248,77 @@ impl Clone for InstanstiatedObject {
 
 /// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::PairWith]
 pub struct InstanstiatedPair {
-    pub pair_type_info: TypeInformation,
     pub sequence: PairSequence,
-    pub patterns: Vec<Pattern>,
+    pub patterns: Rc<Vec<Pattern>>,
+    pub inner: Rc<InstanstiatedObject>,
+    /// Should never be None, as creation of this pointer is handled by [InstanstiatedPair::bind_pair]
+    pub pair: RefCell<Option<Weak<InstanstiatedPair>>>,
+}
+
+impl InstanstiatedPair {
+    pub fn bind_pair(
+        obj_1: Rc<InstanstiatedObject>,
+        obj_2: Rc<InstanstiatedObject>,
+        patterns: Vec<Pattern>,
+    ) -> (Rc<InstanstiatedPair>, Rc<InstanstiatedPair>) {
+        let patterns = Rc::new(patterns);
+
+        let p1 = Rc::new(Self::mutate_object(
+            obj_1,
+            PairSequence::First,
+            patterns.clone(),
+        ));
+
+        // cargo fmt doesn't expand this because we don't clone patterns so it isn't long enough
+        // and it's is pissing me off
+        let p2 = Rc::new(Self::mutate_object(obj_2, PairSequence::Last, patterns));
+
+        *p1.pair.borrow_mut() = Some(Rc::downgrade(&p2));
+        *p2.pair.borrow_mut() = Some(Rc::downgrade(&p1));
+
+        (p1, p2)
+    }
+
+    /// Get pair information without creating circular references
+    pub fn get_pair_info(&self) -> Option<Rc<InstanstiatedPair>> {
+        self.pair.borrow().as_ref().and_then(|weak| weak.upgrade())
+    }
+
+    /// Get the actual pair object from cache if it exists
+    pub fn get_pair_inner(&self, cache: &ObjectCache) -> Option<Rc<InstanstiatedObject>> {
+        self.pair.borrow().as_ref().and_then(|pair| {
+            let upgrade = pair.upgrade();
+            if upgrade.is_none() {
+                None
+            } else {
+                Some(pair.upgrade().unwrap().inner.clone())
+            }
+        })
+    }
+
+    /// Mutates a InstanstiatedObject into a InstanstiatedPair
+    /// But sets the pair pointer to point to nothing.  
+    fn mutate_object(
+        obj: Rc<InstanstiatedObject>,
+        sequence: PairSequence,
+        patterns: Rc<Vec<Pattern>>,
+    ) -> InstanstiatedPair {
+        Self {
+            inner: obj,
+            pair: RefCell::new(None),
+            sequence,
+            patterns,
+        }
+    }
 }
 
 impl Clone for InstanstiatedPair {
     fn clone(&self) -> Self {
         Self {
-            pair_type_info: self.pair_type_info.clone(),
             sequence: self.sequence.clone(),
             patterns: self.patterns.clone(),
+            inner: self.inner.clone(),
+            pair: RefCell::new(self.pair.borrow().clone()),
         }
     }
 }
@@ -309,6 +340,39 @@ impl InstanstiatedObjectBuilder {
         E: Error + Debug + Display + 'static,
     {
         InstanstiatedObject::from_obj_with_cache::<T, E>(&mut self.cache)
+    }
+
+    pub fn build_with_pair<T, U, TE, UE>(
+        &mut self,
+    ) -> (Rc<InstanstiatedPair>, Rc<InstanstiatedPair>)
+    where
+        T: PairWith<U> + 'static,
+        U: PairWith<T> + 'static,
+        TE: Error + Debug + Display + 'static,
+        UE: Error + Debug + Display + 'static,
+    {
+        if T::PATTERNS != U::PATTERNS {
+            panic!(
+                "Patterns of type {} didn't match patterns of type {}!",
+                T::TYPE.ident,
+                U::TYPE.ident
+            );
+        }
+
+        // Since we check if the patterns differ above, we can just use either patterns variable as they will be identical.
+        let patterns = T::PATTERNS;
+        let o1 = self.build::<T, TE>();
+        let o2 = self.build::<U, UE>();
+        let p1 = InstanstiatedPair::bind_pair(o1, o2, patterns.to_vec());
+
+        p1
+    }
+
+    fn unwrap_obj(obj: Rc<InstanstiatedObject>) -> InstanstiatedObject {
+        match Rc::try_unwrap(obj) {
+            Ok(t) => t,
+            Err(rc) => (*rc).clone(),
+        }
     }
 
     /// Build and automatically connect parent-child relationships
@@ -495,7 +559,6 @@ mod tests {
         let obj = InstanstiatedObject {
             parent: None,
             children: vec![],
-            pair: None,
             classification_method,
             extraction_method: Box::new(
                 extract_fn as ExtractionMethod<SharedData, MyError, Constructed>,

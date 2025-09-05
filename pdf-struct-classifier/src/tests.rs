@@ -251,18 +251,16 @@ fn test_expected_children() {
 fn test_pair_relationships() {
     let mut builder = InstanstiatedObjectBuilder::new();
 
-    let diagram = builder.build::<Diagram, TestError>();
-    let datatable = builder.build::<DataTable, TestError>();
+    let (diagram, datatable) =
+        builder.build_with_pair::<Diagram, DataTable, TestError, TestError>();
 
     // Check pair information
-    assert!(diagram.pair.is_some());
+    assert!(diagram.pair.borrow().is_some());
     let diagram_pair = diagram.get_pair_info().unwrap();
-    assert_eq!(diagram_pair.pair_type_info.id, TypeId::of::<DataTable>());
     assert!(matches!(diagram_pair.sequence, PairSequence::First));
 
-    assert!(datatable.pair.is_some());
+    assert!(datatable.pair.borrow().is_some());
     let datatable_pair = datatable.get_pair_info().unwrap();
-    assert_eq!(datatable_pair.pair_type_info.id, TypeId::of::<Diagram>());
     assert!(matches!(datatable_pair.sequence, PairSequence::Last));
 }
 
@@ -401,31 +399,6 @@ fn test_can_have_child() {
     assert!(subchapter.can_have_child(TypeId::of::<DataTable>()));
     // SubChapter cannot have Chapter
     assert!(!subchapter.can_have_child(TypeId::of::<Chapter>()));
-}
-
-#[test]
-fn test_get_pair_object() {
-    let mut builder = InstanstiatedObjectBuilder::new();
-
-    let diagram = builder.build::<Diagram, TestError>();
-    let datatable = builder.build::<DataTable, TestError>();
-
-    let cache = builder.get_cache();
-
-    // Test getting pair object from cache
-    let diagram_pair_obj = diagram.get_pair_object(cache);
-    assert!(diagram_pair_obj.is_some());
-    assert_eq!(
-        diagram_pair_obj.unwrap().obj_type.id,
-        TypeId::of::<DataTable>()
-    );
-
-    let datatable_pair_obj = datatable.get_pair_object(cache);
-    assert!(datatable_pair_obj.is_some());
-    assert_eq!(
-        datatable_pair_obj.unwrap().obj_type.id,
-        TypeId::of::<Diagram>()
-    );
 }
 
 #[test]

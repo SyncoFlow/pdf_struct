@@ -11,7 +11,7 @@ use std::fmt::{Debug, Display};
 ///
 /// This tells the classifier that said pattern exists and to apply it
 /// when finding a Subchapter.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum Pattern {
     Pair {
         first: TypeInformation,
