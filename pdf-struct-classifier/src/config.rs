@@ -1,12 +1,13 @@
 use crate::instances::*;
-use std::fmt::{Debug, Display};
 use pdf_struct_traits::{Classify, InferredPage, KeyPage, Object, Root};
+use std::fmt::{Debug, Display};
 
 /// Represents the configuration for document structure.
 pub struct Config {
     pub(crate) keys: Vec<InstanstiatedKeyPage>,
     pub(crate) inferred: Vec<InstanstiatedInferredPage>,
     pub(crate) root: InstanstiatedRoot,
+    pub(crate) offset: i32,
 }
 
 impl Config {
@@ -15,6 +16,7 @@ impl Config {
             keys: vec![],
             inferred: vec![],
             root: None,
+            offset: 0,
         }
     }
 }
@@ -24,6 +26,7 @@ pub struct ConfigBuilder {
     keys: Vec<InstanstiatedKeyPage>,
     inferred: Vec<InstanstiatedInferredPage>,
     root: Option<InstanstiatedRoot>,
+    offset: i32,
 }
 
 impl ConfigBuilder {
@@ -64,12 +67,21 @@ impl ConfigBuilder {
         self
     }
 
+    /// Sets the page the classifier will start from, instead of 0.
+    /// ! (pages are zero-indexed)
+    pub fn set_start(mut self, offset: i32) -> Self {
+        self.offset = offset;
+
+        self
+    }
+
     /// Consumes the builder into a Config.
     pub fn build(self) -> Config {
         Config {
             keys: self.keys,
             inferred: self.inferred,
             root: self.root.expect("A root struct is required!"),
+            offset: self.offset,
         }
     }
 }
