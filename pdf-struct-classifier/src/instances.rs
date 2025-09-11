@@ -30,7 +30,7 @@ type ClassificationMethod<T, E> = fn(&[u8]) -> ClassificationResult<T, E>;
 type ExtractionMethod<T, E, S> = fn(&[u8], T) -> Result<S, E>;
 
 /// Cache holding information of each  
-type ObjectCache = HashMap<TypeId, Rc<InstanstiatedObject>>;
+type ObjectCache = HashMap<TypeId, Rc<ConcreteObject>>;
 
 /// Crate-level error that can only be called when attempting
 /// to cast into a [ClassificationMethod] or [ExtractionMethod]
@@ -40,20 +40,20 @@ pub(crate) enum CastError {
 }
 
 /// Represents a type that implements [pdf_struct_traits::Object] at runtime.
-pub struct InstanstiatedObject {
-    pub parent: Option<Rc<InstanstiatedObject>>,
-    pub children: Vec<Rc<InstanstiatedObject>>,
+pub struct ConcreteObject {
+    pub parent: Option<Rc<ConcreteObject>>,
+    pub children: Vec<Rc<ConcreteObject>>,
     /// Box<ClassificationMethod<T, E>;
     /// Where T is a type shared between Classify and Extract
     /// And E is an error type.
     /// ! This member should NOT be manually set or casted into.
-    /// ! Utilize [InstanstiatedObject::cast_classification]
+    /// ! Utilize [ConcreteObject::cast_classification]
     pub(crate) classification_method: Box<dyn AnyClone>,
     /// Box<ExtractionMethod<T, E>;
     /// Where T is a type shared between Classify and Extract
     /// And E is an error type.
     /// ! This member should NOT be manually set or casted into.
-    /// ! Utilize [InstanstiatedObject::cast_extraction]
+    /// ! Utilize [ConcreteObject::cast_extraction]
     pub(crate) extraction_method: Box<dyn AnyClone>,
     /// Reflected information of the type defined as an object
     /// Which Self represents at runtime.
@@ -62,7 +62,7 @@ pub struct InstanstiatedObject {
     pub(crate) expected_children: Vec<TypeInformation>,
 }
 
-impl InstanstiatedObject {
+impl ConcreteObject {
     pub fn from_obj_with_cache<T, E>(cache: &mut ObjectCache) -> Rc<Self>
     where
         T: Object + 'static,
@@ -80,7 +80,7 @@ impl InstanstiatedObject {
     }
 
     /// Casts T and E into fn<T, E>(&\[u8]) -> ClassificationResult<T, E>;
-    /// This method is unsafe because [InstanstiatedObject::classification_method]
+    /// This method is unsafe because [ConcreteObject::classification_method]
     /// may not match the expected TypeId to cast back into a concrete [ClassificationMethod]
     pub(crate) unsafe fn cast_classification<T, E>(
         &self,
@@ -109,7 +109,7 @@ impl InstanstiatedObject {
     }
 
     /// Casts T, E, S into fn(&\[u8], T) -> Result<S, E>;
-    /// This method is unsafe because [InstanstiatedObject::extraction_method]
+    /// This method is unsafe because [ConcreteObject::extraction_method]
     /// may not match the expected TypeId to cast back into a concrete [ExtractionMethod]
     pub(crate) unsafe fn cast_extraction<T, E, S>(
         &self,
@@ -161,7 +161,7 @@ impl InstanstiatedObject {
     }
 
     /// Add a child, checking if it's allowed
-    pub fn add_child(&mut self, child: Rc<InstanstiatedObject>) -> Result<(), String> {
+    pub fn add_child(&mut self, child: Rc<ConcreteObject>) -> Result<(), String> {
         if self
             .children
             .iter()
@@ -191,7 +191,7 @@ impl InstanstiatedObject {
     }
 
     /// Add child without validation (for internal use)
-    pub fn add_child_unchecked(&mut self, child: Rc<InstanstiatedObject>) {
+    pub fn add_child_unchecked(&mut self, child: Rc<ConcreteObject>) {
         if !self
             .children
             .iter()
@@ -203,7 +203,7 @@ impl InstanstiatedObject {
 
     /// Find and add all children from cache that have this object as their parent
     pub fn collect_children_from_cache(&mut self, cache: &ObjectCache) {
-        let matching_children: Vec<Rc<InstanstiatedObject>> = cache
+        let matching_children: Vec<Rc<ConcreteObject>> = cache
             .values()
             .filter(|obj| {
                 // Check if this object is the parent of the cached object
@@ -233,7 +233,7 @@ impl InstanstiatedObject {
     }
 }
 
-impl Clone for InstanstiatedObject {
+impl Clone for ConcreteObject {
     fn clone(&self) -> Self {
         Self {
             parent: self.parent.clone(),
@@ -247,20 +247,20 @@ impl Clone for InstanstiatedObject {
 }
 
 /// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::PairWith]
-pub struct InstanstiatedPair {
+pub struct ConcretePair {
     pub sequence: PairSequence,
     pub patterns: Rc<Vec<Pattern>>,
-    pub inner: Rc<InstanstiatedObject>,
-    /// Should never be None, as creation of this pointer is handled by [InstanstiatedPair::bind_pair]
-    pub pair: RefCell<Option<Weak<InstanstiatedPair>>>,
+    pub inner: Rc<ConcreteObject>,
+    /// Should never be None, as creation of this pointer is handled by [ConcretePair::bind_pair]
+    pub pair: RefCell<Option<Weak<ConcretePair>>>,
 }
 
-impl InstanstiatedPair {
+impl ConcretePair {
     pub fn bind_pair(
-        obj_1: Rc<InstanstiatedObject>,
-        obj_2: Rc<InstanstiatedObject>,
+        obj_1: Rc<ConcreteObject>,
+        obj_2: Rc<ConcreteObject>,
         patterns: Vec<Pattern>,
-    ) -> (Rc<InstanstiatedPair>, Rc<InstanstiatedPair>) {
+    ) -> (Rc<ConcretePair>, Rc<ConcretePair>) {
         let patterns = Rc::new(patterns);
 
         let p1 = Rc::new(Self::mutate_object(
@@ -280,12 +280,12 @@ impl InstanstiatedPair {
     }
 
     /// Get pair information without creating circular references
-    pub fn get_pair_info(&self) -> Option<Rc<InstanstiatedPair>> {
+    pub fn get_pair_info(&self) -> Option<Rc<ConcretePair>> {
         self.pair.borrow().as_ref().and_then(|weak| weak.upgrade())
     }
 
     /// Get the actual pair object from cache if it exists
-    pub fn get_pair_inner(&self, cache: &ObjectCache) -> Option<Rc<InstanstiatedObject>> {
+    pub fn get_pair_inner(&self, cache: &ObjectCache) -> Option<Rc<ConcreteObject>> {
         self.pair.borrow().as_ref().and_then(|pair| {
             let upgrade = pair.upgrade();
             if upgrade.is_none() {
@@ -296,13 +296,13 @@ impl InstanstiatedPair {
         })
     }
 
-    /// Mutates a InstanstiatedObject into a InstanstiatedPair
+    /// Mutates a ConcreteObject into a ConcretePair
     /// But sets the pair pointer to point to nothing.  
     fn mutate_object(
-        obj: Rc<InstanstiatedObject>,
+        obj: Rc<ConcreteObject>,
         sequence: PairSequence,
         patterns: Rc<Vec<Pattern>>,
-    ) -> InstanstiatedPair {
+    ) -> ConcretePair {
         Self {
             inner: obj,
             pair: RefCell::new(None),
@@ -312,7 +312,7 @@ impl InstanstiatedPair {
     }
 }
 
-impl Clone for InstanstiatedPair {
+impl Clone for ConcretePair {
     fn clone(&self) -> Self {
         Self {
             sequence: self.sequence.clone(),
@@ -323,28 +323,26 @@ impl Clone for InstanstiatedPair {
     }
 }
 
-pub struct InstanstiatedObjectBuilder {
+pub struct ConcreteObjectBuilder {
     cache: ObjectCache,
 }
 
-impl InstanstiatedObjectBuilder {
+impl ConcreteObjectBuilder {
     pub fn new() -> Self {
         Self {
             cache: HashMap::new(),
         }
     }
 
-    pub fn build<T, E>(&mut self) -> Rc<InstanstiatedObject>
+    pub fn build<T, E>(&mut self) -> Rc<ConcreteObject>
     where
         T: Object + 'static,
         E: Error + Debug + Display + 'static,
     {
-        InstanstiatedObject::from_obj_with_cache::<T, E>(&mut self.cache)
+        ConcreteObject::from_obj_with_cache::<T, E>(&mut self.cache)
     }
 
-    pub fn build_with_pair<T, U, TE, UE>(
-        &mut self,
-    ) -> (Rc<InstanstiatedPair>, Rc<InstanstiatedPair>)
+    pub fn build_with_pair<T, U, TE, UE>(&mut self) -> (Rc<ConcretePair>, Rc<ConcretePair>)
     where
         T: PairWith<U> + 'static,
         U: PairWith<T> + 'static,
@@ -363,12 +361,12 @@ impl InstanstiatedObjectBuilder {
         let patterns = T::PATTERNS;
         let o1 = self.build::<T, TE>();
         let o2 = self.build::<U, UE>();
-        let p1 = InstanstiatedPair::bind_pair(o1, o2, patterns.to_vec());
+        let p1 = ConcretePair::bind_pair(o1, o2, patterns.to_vec());
 
         p1
     }
 
-    fn unwrap_obj(obj: Rc<InstanstiatedObject>) -> InstanstiatedObject {
+    fn unwrap_obj(obj: Rc<ConcreteObject>) -> ConcreteObject {
         match Rc::try_unwrap(obj) {
             Ok(t) => t,
             Err(rc) => (*rc).clone(),
@@ -376,7 +374,7 @@ impl InstanstiatedObjectBuilder {
     }
 
     /// Build and automatically connect parent-child relationships
-    pub fn build_with_relationships<T, E>(&mut self) -> Rc<InstanstiatedObject>
+    pub fn build_with_relationships<T, E>(&mut self) -> Rc<ConcreteObject>
     where
         T: Object + 'static,
         E: Error + Debug + Display + 'static,
@@ -402,12 +400,12 @@ impl InstanstiatedObjectBuilder {
 }
 
 /// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::Root]
-pub struct InstanstiatedRoot {
-    pub children: Vec<Rc<InstanstiatedObject>>,
+pub struct ConcreteRoot {
+    pub children: Vec<Rc<ConcreteObject>>,
     pub cache: ObjectCache,
 }
 
-impl InstanstiatedRoot {
+impl ConcreteRoot {
     pub fn new() -> Self {
         Self {
             children: vec![],
@@ -420,7 +418,7 @@ impl InstanstiatedRoot {
         T: Object + 'static,
         E: Error + Debug + Display + 'static,
     {
-        let child = InstanstiatedObject::from_obj_with_cache::<T, E>(&mut self.cache);
+        let child = ConcreteObject::from_obj_with_cache::<T, E>(&mut self.cache);
 
         if self.children.iter().any(|c| c.obj_type.id == T::TYPE.id) {
             return Err(format!(
@@ -475,46 +473,46 @@ impl InstanstiatedRoot {
 }
 
 /// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::KeyPage]
-pub struct InstanstiatedKeyPage(Rc<InstanstiatedObject>);
+pub struct ConcreteKeyPage(Rc<ConcreteObject>);
 
-impl InstanstiatedKeyPage {
+impl ConcreteKeyPage {
     pub fn new<T, E>(cache: &mut ObjectCache) -> Self
     where
         T: KeyPage + 'static,
         E: Error + Debug + Display + 'static,
     {
-        Self(InstanstiatedObject::from_obj_with_cache::<T, E>(cache))
+        Self(ConcreteObject::from_obj_with_cache::<T, E>(cache))
     }
 
-    pub fn inner(&self) -> &InstanstiatedObject {
+    pub fn inner(&self) -> &ConcreteObject {
         &self.0
     }
 }
-impl From<Rc<InstanstiatedObject>> for InstanstiatedKeyPage {
-    fn from(value: Rc<InstanstiatedObject>) -> Self {
+impl From<Rc<ConcreteObject>> for ConcreteKeyPage {
+    fn from(value: Rc<ConcreteObject>) -> Self {
         Self { 0: value }
     }
 }
 
 /// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::InferredPage]
-pub struct InstanstiatedInferredPage(Rc<InstanstiatedObject>);
+pub struct ConcreteInferredPage(Rc<ConcreteObject>);
 
-impl InstanstiatedInferredPage {
+impl ConcreteInferredPage {
     pub fn new<T, E>(cache: &mut ObjectCache) -> Self
     where
         T: InferredPage + 'static,
         E: Error + Debug + Display + 'static,
     {
-        Self(InstanstiatedObject::from_obj_with_cache::<T, E>(cache))
+        Self(ConcreteObject::from_obj_with_cache::<T, E>(cache))
     }
 
-    pub fn inner(&self) -> &InstanstiatedObject {
+    pub fn inner(&self) -> &ConcreteObject {
         &self.0
     }
 }
 
-impl From<Rc<InstanstiatedObject>> for InstanstiatedInferredPage {
-    fn from(value: Rc<InstanstiatedObject>) -> Self {
+impl From<Rc<ConcreteObject>> for ConcreteInferredPage {
+    fn from(value: Rc<ConcreteObject>) -> Self {
         Self { 0: value }
     }
 }
@@ -556,7 +554,7 @@ mod tests {
         let classification_method =
             Box::new(classify_fn as ClassificationMethod<SharedData, MyError>) as Box<dyn AnyClone>;
 
-        let obj = InstanstiatedObject {
+        let obj = ConcreteObject {
             parent: None,
             children: vec![],
             classification_method,
