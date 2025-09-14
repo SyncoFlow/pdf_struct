@@ -1,12 +1,44 @@
+use dashmap::DashMap;
 use pdf_struct_traits::*;
 use std::any::{Any, TypeId};
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Display};
-use std::rc::{Rc, Weak};
+use std::sync::{Arc, RwLock, Weak};
 
-pub trait AnyClone: Any {
+/// Requires an instance of each associated-concrete type within each variant.
+/// See [ConcretePageTypeIdentifiers] for the opposite.
+#[derive(Clone)]
+pub enum ConcretePageType {
+    Key(ConcreteKeyPage),
+    Inferred(ConcreteInferredPage),
+    Pair(ConcretePair),
+}
+
+/// Doesn't require an instance of each associated-concrete type within each variant.
+/// See [ConcretePageType] for the opposite.
+pub enum ConcretePageTypeIdentifiers {
+    Key,
+    Inferred,
+    Pair,
+}
+
+impl ConcretePageType {
+    pub fn inner(&self) -> Arc<RwLock<ConcreteObject>> {
+        match self {
+            Self::Inferred(i) => i.inner(),
+            Self::Key(k) => k.inner(),
+            Self::Pair(p) => p.inner.clone(),
+        }
+    }
+
+    pub fn inner_mut(&self) -> Arc<RwLock<ConcreteObject>> {
+        // With Arc<RwLock<>>, we don't need a separate inner_mut method
+        // as the RwLock provides the mutability through write locks
+        self.inner()
+    }
+}
+
+pub(crate) trait AnyClone: Any {
     /// Deep-clones the underlying data within a Box
     /// Or in other words, clones T within Box<T>.
     fn clone_box(&self) -> Box<dyn AnyClone>;
@@ -21,16 +53,16 @@ impl<T: Any + Clone> AnyClone for T {
 /// Where:
 ///     T is shared data
 ///     E is error
-type ClassificationMethod<T, E> = fn(&[u8]) -> ClassificationResult<T, E>;
+pub(crate) type ClassificationMethod<T, E> = fn(&[u8]) -> ClassificationResult<T, E>;
 
 /// Where:
 ///     T is shared data
 ///     E is error
 ///     S is Self (the constructed object)
-type ExtractionMethod<T, E, S> = fn(&[u8], T) -> Result<S, E>;
+pub(crate) type ExtractionMethod<T, E, S> = fn(&[u8], T) -> Result<S, E>;
 
 /// Cache holding information of each  
-type ObjectCache = HashMap<TypeId, Rc<ConcreteObject>>;
+pub(crate) type ObjectCache = DashMap<TypeId, Arc<RwLock<ConcretePageType>>>;
 
 /// Crate-level error that can only be called when attempting
 /// to cast into a [ClassificationMethod] or [ExtractionMethod]
@@ -41,8 +73,8 @@ pub(crate) enum CastError {
 
 /// Represents a type that implements [pdf_struct_traits::Object] at runtime.
 pub struct ConcreteObject {
-    pub parent: Option<Rc<ConcreteObject>>,
-    pub children: Vec<Rc<ConcreteObject>>,
+    pub parent: Option<Arc<RwLock<ConcretePageType>>>,
+    pub children: Vec<Arc<RwLock<ConcretePageType>>>,
     /// Box<ClassificationMethod<T, E>;
     /// Where T is a type shared between Classify and Extract
     /// And E is an error type.
@@ -63,7 +95,9 @@ pub struct ConcreteObject {
 }
 
 impl ConcreteObject {
-    pub fn from_obj_with_cache<T, E>(cache: &mut ObjectCache) -> Rc<Self>
+    pub(crate) fn from_obj_with_cache<T, E>(
+        cache: &mut ObjectCache,
+    ) -> Arc<RwLock<ConcretePageType>>
     where
         T: Object + 'static,
         E: Error + Debug + Display + 'static,
@@ -72,11 +106,22 @@ impl ConcreteObject {
             return cached.clone();
         }
 
-        let obj = Rc::new(Self::from_obj_internal::<T, E>(cache));
-
-        cache.insert(T::TYPE.id, obj.clone());
-
-        obj
+        let raw = Self::from_obj_internal::<T, E>(cache);
+        let page_type = if T::KEY_PAGE {
+            Arc::new(RwLock::new(ConcretePageType::Key(ConcreteKeyPage(
+                Arc::new(RwLock::new(raw)),
+            ))))
+        } else if T::INFERRED_PAGE {
+            Arc::new(RwLock::new(ConcretePageType::Inferred(
+                ConcreteInferredPage(Arc::new(RwLock::new(raw))),
+            )))
+        } else {
+            Arc::new(RwLock::new(ConcretePageType::Inferred(
+                ConcreteInferredPage(Arc::new(RwLock::new(raw))),
+            )))
+        };
+        cache.insert(T::TYPE.id, page_type.clone());
+        page_type
     }
 
     /// Casts T and E into fn<T, E>(&\[u8]) -> ClassificationResult<T, E>;
@@ -161,23 +206,34 @@ impl ConcreteObject {
     }
 
     /// Add a child, checking if it's allowed
-    pub fn add_child(&mut self, child: Rc<ConcreteObject>) -> Result<(), String> {
-        if self
-            .children
-            .iter()
-            .any(|x| x.obj_type.id == child.obj_type.id)
-        {
+    pub fn add_child(&mut self, child: Arc<RwLock<ConcretePageType>>) -> Result<(), String> {
+        let child_type_id = {
+            let child_inner = child.read().unwrap();
+            let child_obj = child_inner.inner();
+            let child_obj = child_obj.read().unwrap();
+            child_obj.obj_type.id
+        };
+
+        if self.children.iter().any(|x| {
+            let x_inner = x.read().unwrap();
+            let x_inner = x_inner.inner();
+            let x_obj = x_inner.read().unwrap();
+            x_obj.obj_type.id == child_type_id
+        }) {
             return Err("Child of this type already exists".to_string());
         }
 
         if !self
             .expected_children
             .iter()
-            .any(|child_type| child_type.id == child.obj_type.id)
+            .any(|child_type| child_type.id == child_type_id)
         {
+            let child_inner = child.read().unwrap();
+            let child_obj = child_inner.inner();
+            let child_obj = child_obj.read().unwrap();
             return Err(format!(
                 "Child {} is not allowed for parent {}. Expected children: {:?}",
-                child.obj_type.ident,
+                child_obj.obj_type.ident,
                 self.obj_type.ident,
                 self.expected_children
                     .iter()
@@ -190,33 +246,102 @@ impl ConcreteObject {
         Ok(())
     }
 
-    /// Add child without validation (for internal use)
-    pub fn add_child_unchecked(&mut self, child: Rc<ConcreteObject>) {
-        if !self
-            .children
-            .iter()
-            .any(|x| x.obj_type.id == child.obj_type.id)
-        {
-            self.children.push(child);
-        }
+    /// Add child without validation.
+    pub fn add_child_unchecked(&mut self, child: Arc<RwLock<ConcretePageType>>) {
+        let child_type_id = {
+            let child_inner = child.read().unwrap();
+            let child_obj = child_inner.inner();
+            let child_obj = child_obj.read().unwrap();
+            child_obj.obj_type.id
+        };
+
+        self.children.push(child);
     }
 
     /// Find and add all children from cache that have this object as their parent
     pub fn collect_children_from_cache(&mut self, cache: &ObjectCache) {
-        let matching_children: Vec<Rc<ConcreteObject>> = cache
-            .values()
-            .filter(|obj| {
-                // Check if this object is the parent of the cached object
-                obj.parent
-                    .as_ref()
-                    .map(|parent| parent.obj_type.id == self.obj_type.id)
-                    .unwrap_or(false)
-            })
-            .cloned()
+        let mut existing_child_types: Vec<TypeId> = Vec::new();
+        for child in &self.children {
+            if let Ok(child_inner) = child.try_read() {
+                if let Ok(child_obj) = child_inner.inner().try_read() {
+                    existing_child_types.push(child_obj.obj_type.id);
+                }
+            }
+        }
+
+        let expected_child_types: Vec<TypeId> = self
+            .expected_children
+            .iter()
+            .map(|type_info| type_info.id)
             .collect();
 
-        for child in matching_children {
-            self.add_child_unchecked(child);
+        let mut candidates: Vec<(Arc<RwLock<ConcretePageType>>, TypeId, String)> = Vec::new();
+
+        for item in cache.iter() {
+            let obj = item.value();
+
+            if self.children.iter().any(|child| Arc::ptr_eq(child, obj)) {
+                continue;
+            }
+
+            let type_info = {
+                let max_attempts = 3;
+                let mut attempt_count = 0;
+
+                loop {
+                    if let Ok(obj_guard) = obj.try_read() {
+                        let result = match &*obj_guard {
+                            ConcretePageType::Key(key_page) => {
+                                if let Ok(inner) = key_page.inner().try_read() {
+                                    Some((inner.obj_type.id, inner.obj_type.ident.to_string()))
+                                } else {
+                                    None
+                                }
+                            }
+                            ConcretePageType::Inferred(inferred_page) => {
+                                if let Ok(inner) = inferred_page.inner().try_read() {
+                                    Some((inner.obj_type.id, inner.obj_type.ident.to_string()))
+                                } else {
+                                    None
+                                }
+                            }
+                            ConcretePageType::Pair(pair) => {
+                                if let Ok(inner) = pair.inner.try_read() {
+                                    Some((inner.obj_type.id, inner.obj_type.ident.to_string()))
+                                } else {
+                                    None
+                                }
+                            }
+                        };
+
+                        drop(obj_guard);
+
+                        if let Some((type_id, type_name)) = result {
+                            break Some((type_id, type_name));
+                        }
+                    }
+
+                    attempt_count += 1;
+                    if attempt_count >= max_attempts {
+                        break None;
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            };
+
+            if let Some((type_id, type_name)) = type_info {
+                if !existing_child_types.contains(&type_id) {
+                    if expected_child_types.contains(&type_id) {
+                        candidates.push((obj.clone(), type_id, type_name));
+                    }
+                }
+            }
+        }
+
+        for (obj, type_id, _type_name) in candidates {
+            self.children.push(obj);
+            existing_child_types.push(type_id);
         }
     }
 
@@ -230,6 +355,13 @@ impl ConcreteObject {
     /// Get all possible child types
     pub fn get_expected_child_types(&self) -> &[TypeInformation] {
         &self.expected_children
+    }
+
+    pub fn parent_inner(&self) -> Option<Arc<RwLock<ConcreteObject>>> {
+        match &self.parent {
+            Some(s) => Some(s.read().unwrap().inner()),
+            None => None,
+        }
     }
 }
 
@@ -249,44 +381,50 @@ impl Clone for ConcreteObject {
 /// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::PairWith]
 pub struct ConcretePair {
     pub sequence: PairSequence,
-    pub patterns: Rc<Vec<Pattern>>,
-    pub inner: Rc<ConcreteObject>,
+    pub patterns: Arc<Vec<Pattern>>,
+    pub inner: Arc<RwLock<ConcreteObject>>,
     /// Should never be None, as creation of this pointer is handled by [ConcretePair::bind_pair]
-    pub pair: RefCell<Option<Weak<ConcretePair>>>,
+    pub pair: RwLock<Option<Weak<ConcretePair>>>,
 }
 
 impl ConcretePair {
     pub fn bind_pair(
-        obj_1: Rc<ConcreteObject>,
-        obj_2: Rc<ConcreteObject>,
+        obj_1: Arc<RwLock<ConcreteObject>>,
+        obj_2: Arc<RwLock<ConcreteObject>>,
         patterns: Vec<Pattern>,
-    ) -> (Rc<ConcretePair>, Rc<ConcretePair>) {
-        let patterns = Rc::new(patterns);
+    ) -> (Arc<ConcretePair>, Arc<ConcretePair>) {
+        let patterns = Arc::new(patterns);
 
-        let p1 = Rc::new(Self::mutate_object(
+        let p1 = Arc::new(Self::mutate_object_to_pair(
             obj_1,
             PairSequence::First,
             patterns.clone(),
         ));
 
-        // cargo fmt doesn't expand this because we don't clone patterns so it isn't long enough
-        // and it's is pissing me off
-        let p2 = Rc::new(Self::mutate_object(obj_2, PairSequence::Last, patterns));
+        let p2 = Arc::new(Self::mutate_object_to_pair(
+            obj_2,
+            PairSequence::Last,
+            patterns,
+        ));
 
-        *p1.pair.borrow_mut() = Some(Rc::downgrade(&p2));
-        *p2.pair.borrow_mut() = Some(Rc::downgrade(&p1));
+        *p1.pair.write().unwrap() = Some(Arc::downgrade(&p2));
+        *p2.pair.write().unwrap() = Some(Arc::downgrade(&p1));
 
         (p1, p2)
     }
 
     /// Get pair information without creating circular references
-    pub fn get_pair_info(&self) -> Option<Rc<ConcretePair>> {
-        self.pair.borrow().as_ref().and_then(|weak| weak.upgrade())
+    pub fn get_pair_info(&self) -> Option<Arc<ConcretePair>> {
+        self.pair
+            .read()
+            .unwrap()
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
     }
 
     /// Get the actual pair object from cache if it exists
-    pub fn get_pair_inner(&self, cache: &ObjectCache) -> Option<Rc<ConcreteObject>> {
-        self.pair.borrow().as_ref().and_then(|pair| {
+    pub fn get_pair_inner(&self, cache: &ObjectCache) -> Option<Arc<RwLock<ConcreteObject>>> {
+        self.pair.read().unwrap().as_ref().and_then(|pair| {
             let upgrade = pair.upgrade();
             if upgrade.is_none() {
                 None
@@ -296,16 +434,16 @@ impl ConcretePair {
         })
     }
 
-    /// Mutates a ConcreteObject into a ConcretePair
+    /// Mutates a [ConcreteObject] into a [ConcretePair]
     /// But sets the pair pointer to point to nothing.  
-    fn mutate_object(
-        obj: Rc<ConcreteObject>,
+    fn mutate_object_to_pair(
+        obj: Arc<RwLock<ConcreteObject>>,
         sequence: PairSequence,
-        patterns: Rc<Vec<Pattern>>,
+        patterns: Arc<Vec<Pattern>>,
     ) -> ConcretePair {
         Self {
             inner: obj,
-            pair: RefCell::new(None),
+            pair: RwLock::new(None),
             sequence,
             patterns,
         }
@@ -318,7 +456,7 @@ impl Clone for ConcretePair {
             sequence: self.sequence.clone(),
             patterns: self.patterns.clone(),
             inner: self.inner.clone(),
-            pair: RefCell::new(self.pair.borrow().clone()),
+            pair: RwLock::new(self.pair.read().unwrap().clone()),
         }
     }
 }
@@ -330,11 +468,11 @@ pub struct ConcreteObjectBuilder {
 impl ConcreteObjectBuilder {
     pub fn new() -> Self {
         Self {
-            cache: HashMap::new(),
+            cache: DashMap::new(),
         }
     }
 
-    pub fn build<T, E>(&mut self) -> Rc<ConcreteObject>
+    pub fn build<T, E>(&mut self) -> Arc<RwLock<ConcretePageType>>
     where
         T: Object + 'static,
         E: Error + Debug + Display + 'static,
@@ -342,7 +480,7 @@ impl ConcreteObjectBuilder {
         ConcreteObject::from_obj_with_cache::<T, E>(&mut self.cache)
     }
 
-    pub fn build_with_pair<T, U, TE, UE>(&mut self) -> (Rc<ConcretePair>, Rc<ConcretePair>)
+    pub fn build_with_pair<T, U, TE, UE>(&mut self) -> (Arc<ConcretePair>, Arc<ConcretePair>)
     where
         T: PairWith<U> + 'static,
         U: PairWith<T> + 'static,
@@ -357,37 +495,58 @@ impl ConcreteObjectBuilder {
             );
         }
 
-        // Since we check if the patterns differ above, we can just use either patterns variable as they will be identical.
         let patterns = T::PATTERNS;
         let o1 = self.build::<T, TE>();
         let o2 = self.build::<U, UE>();
-        let p1 = ConcretePair::bind_pair(o1, o2, patterns.to_vec());
+        let p1 = ConcretePair::bind_pair(
+            o1.read().unwrap().inner(),
+            o2.read().unwrap().inner(),
+            patterns.to_vec(),
+        );
 
         p1
     }
 
-    fn unwrap_obj(obj: Rc<ConcreteObject>) -> ConcreteObject {
-        match Rc::try_unwrap(obj) {
-            Ok(t) => t,
-            Err(rc) => (*rc).clone(),
+    fn unwrap_obj(obj: Arc<RwLock<ConcreteObject>>) -> ConcreteObject {
+        match Arc::try_unwrap(obj) {
+            Ok(rwlock) => rwlock.into_inner().unwrap(),
+            Err(arc) => arc.read().unwrap().clone(),
         }
     }
 
     /// Build and automatically connect parent-child relationships
-    pub fn build_with_relationships<T, E>(&mut self) -> Rc<ConcreteObject>
+    pub fn build_with_relationships<T, E>(&mut self) -> Arc<RwLock<ConcretePageType>>
     where
         T: Object + 'static,
         E: Error + Debug + Display + 'static,
     {
         let obj = self.build::<T, E>();
 
-        let mut obj_mut = Rc::try_unwrap(obj).unwrap_or_else(|rc| (*rc).clone());
+        let inner_arc = obj.read().unwrap().inner();
+        let mut obj_mut = match Arc::try_unwrap(inner_arc) {
+            Ok(rwlock) => rwlock.into_inner().unwrap(),
+            Err(arc) => arc.read().unwrap().clone(),
+        };
+
         obj_mut.collect_children_from_cache(&self.cache);
 
-        let obj_rc = Rc::new(obj_mut);
-        self.cache.insert(T::TYPE.id, obj_rc.clone());
+        let updated_obj = Arc::new(RwLock::new(obj_mut));
+        let page_type = if T::KEY_PAGE {
+            Arc::new(RwLock::new(ConcretePageType::Key(ConcreteKeyPage::from(
+                updated_obj,
+            ))))
+        } else if T::INFERRED_PAGE {
+            Arc::new(RwLock::new(ConcretePageType::Inferred(
+                ConcreteInferredPage::from(updated_obj),
+            )))
+        } else {
+            Arc::new(RwLock::new(ConcretePageType::Inferred(
+                ConcreteInferredPage::from(updated_obj),
+            )))
+        };
 
-        obj_rc
+        self.cache.insert(T::TYPE.id, page_type.clone());
+        page_type
     }
 
     pub fn get_cache(&self) -> &ObjectCache {
@@ -401,7 +560,7 @@ impl ConcreteObjectBuilder {
 
 /// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::Root]
 pub struct ConcreteRoot {
-    pub children: Vec<Rc<ConcreteObject>>,
+    pub children: Vec<Arc<RwLock<ConcretePageType>>>,
     pub cache: ObjectCache,
 }
 
@@ -409,111 +568,216 @@ impl ConcreteRoot {
     pub fn new() -> Self {
         Self {
             children: vec![],
-            cache: HashMap::new(),
+            cache: DashMap::new(),
         }
     }
 
-    pub fn add_root_child<T, E>(&mut self) -> Result<(), String>
+    /// Validate that a root child of type T is not already present.
+    fn validate_root_child<T, E>(&mut self) -> Result<(), String>
     where
         T: Object + 'static,
         E: Error + Debug + Display + 'static,
     {
-        let child = ConcreteObject::from_obj_with_cache::<T, E>(&mut self.cache);
-
-        if self.children.iter().any(|c| c.obj_type.id == T::TYPE.id) {
-            return Err(format!(
+        if self.children.iter().any(|c| {
+            let child = c.read().unwrap();
+            let child_inner = child.inner();
+            let child_obj = child_inner.read().unwrap();
+            child_obj.obj_type.id == T::TYPE.id
+        }) {
+            Err(format!(
                 "Root child of type {} already exists",
                 T::TYPE.ident
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn add_child<T, E>(&mut self) -> Result<(), String>
+    where
+        T: Object + 'static,
+        E: Error + Debug + Display + 'static,
+    {
+        self.validate_root_child::<T, E>()?;
+
+        if T::KEY_PAGE {
+            let page = ConcretePageType::Key(ConcreteKeyPage::new::<T, E>(&mut self.cache));
+            self.children.push(Arc::new(RwLock::new(page)));
+        } else {
+            let page =
+                ConcretePageType::Inferred(ConcreteInferredPage::new::<T, E>(&mut self.cache));
+            self.children.push(Arc::new(RwLock::new(page)));
+        }
+
+        Ok(())
+    }
+
+    /// Add a Pair child (creates both sides of the pair and inserts them).
+    /// T and U must be mutually PairWith each other.
+    pub fn add_pair_child<T, U, TE, UE>(&mut self) -> Result<(), String>
+    where
+        T: PairWith<U> + 'static,
+        U: PairWith<T> + 'static,
+        TE: Error + Debug + Display + 'static,
+        UE: Error + Debug + Display + 'static,
+    {
+        // ensure neither side already present
+        if self.children.iter().any(|c| {
+            let child = c.read().unwrap();
+            let child_inner = child.inner();
+            let child_obj = child_inner.read().unwrap();
+            let id = child_obj.obj_type.id;
+            id == T::TYPE.id || id == U::TYPE.id
+        }) {
+            return Err(format!(
+                "One of the pair types ({}, {}) already exists as a root child",
+                T::TYPE.ident,
+                U::TYPE.ident
             ));
         }
 
-        self.children.push(child);
+        let o1 = ConcreteObject::from_obj_with_cache::<T, TE>(&mut self.cache);
+        let o2 = ConcreteObject::from_obj_with_cache::<U, UE>(&mut self.cache);
+
+        let patterns = T::PATTERNS.to_vec();
+
+        let (p1_rc, p2_rc) = ConcretePair::bind_pair(
+            o1.read().unwrap().inner(),
+            o2.read().unwrap().inner(),
+            patterns,
+        );
+
+        self.children
+            .push(Arc::new(RwLock::new(ConcretePageType::Pair(
+                (*p1_rc).clone(),
+            ))));
+        self.children
+            .push(Arc::new(RwLock::new(ConcretePageType::Pair(
+                (*p2_rc).clone(),
+            ))));
+
         Ok(())
     }
 
     /// Connect all parent-child relationships based on the cache
     pub fn connect_relationships(&mut self) {
-        let snapshot = self.cache.clone();
+        let mut all_objects: std::collections::HashMap<TypeId, Arc<RwLock<ConcretePageType>>> =
+            std::collections::HashMap::new();
 
-        let mut children_id_map: HashMap<TypeId, Vec<TypeId>> = HashMap::new();
-        for child in snapshot.values() {
-            if let Some(parent_rc) = child.parent.as_ref() {
-                children_id_map
-                    .entry(parent_rc.obj_type.id)
-                    .or_default()
-                    .push(child.obj_type.id);
+        for item in self.cache.iter() {
+            let page_type = item.value();
+            let page_type_locked = page_type.read().unwrap();
+            let inner_obj = page_type_locked.inner();
+            let obj_type_id = inner_obj.read().unwrap().obj_type.id;
+            all_objects.insert(obj_type_id, page_type.clone());
+        }
+
+        let mut children_id_map: std::collections::HashMap<TypeId, Vec<TypeId>> =
+            std::collections::HashMap::new();
+        for obj in all_objects.values() {
+            let obj_locked = obj.read().unwrap();
+            let inner_obj = obj_locked.inner();
+            let inner_obj_locked = inner_obj.read().unwrap();
+
+            if let Some(parent_arc) = &inner_obj_locked.parent {
+                let parent_locked = parent_arc.read().unwrap();
+                let parent_inner = parent_locked.inner();
+                let parent_obj = parent_inner.read().unwrap();
+                let parent_id = parent_obj.obj_type.id;
+                let child_id = inner_obj_locked.obj_type.id;
+
+                children_id_map.entry(parent_id).or_default().push(child_id);
             }
         }
 
-        let mut new_cache: ObjectCache = HashMap::new();
-        for (id, rc) in snapshot.into_iter() {
-            let mut obj = (*rc).clone();
-            obj.children = Vec::new();
-            new_cache.insert(id, Rc::new(obj));
-        }
+        for (parent_id, child_ids) in children_id_map {
+            if let Some(parent_page_type) = all_objects.get(&parent_id) {
+                let parent_locked = parent_page_type.read().unwrap();
+                let parent_inner = parent_locked.inner();
+                let mut parent_obj = parent_inner.write().unwrap();
 
-        // Populate children by iterating over a collected list of keys to avoid
-        // borrowing/move conflicts while we replace entries in the map.
-        let keys: Vec<TypeId> = new_cache.keys().cloned().collect();
-        for id in keys {
-            if let Some(inter_rc) = new_cache.get(&id).cloned() {
-                let mut obj = (*inter_rc).clone();
-                if let Some(child_ids) = children_id_map.get(&id) {
-                    obj.children = child_ids
-                        .iter()
-                        .filter_map(|cid| new_cache.get(cid).cloned())
-                        .collect();
+                parent_obj.children.clear();
+
+                for child_id in child_ids {
+                    if let Some(child_page_type) = all_objects.get(&child_id) {
+                        parent_obj.children.push(child_page_type.clone());
+                    }
                 }
-                new_cache.insert(id, Rc::new(obj));
             }
         }
-
-        self.cache = new_cache;
     }
 }
 
 /// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::KeyPage]
-pub struct ConcreteKeyPage(Rc<ConcreteObject>);
+pub struct ConcreteKeyPage(Arc<RwLock<ConcreteObject>>);
+
+impl Clone for ConcreteKeyPage {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
 
 impl ConcreteKeyPage {
     pub fn new<T, E>(cache: &mut ObjectCache) -> Self
     where
-        T: KeyPage + 'static,
+        T: Object + 'static,
         E: Error + Debug + Display + 'static,
     {
-        Self(ConcreteObject::from_obj_with_cache::<T, E>(cache))
+        if !T::KEY_PAGE {
+            panic!(
+                "Attempted to construct a key page, without key being `true` within object information for object {}!",
+                T::TYPE.ident
+            )
+        }
+
+        let page_type = ConcreteObject::from_obj_with_cache::<T, E>(cache);
+        Self(page_type.read().unwrap().inner())
     }
 
-    pub fn inner(&self) -> &ConcreteObject {
-        &self.0
+    pub fn inner(&self) -> Arc<RwLock<ConcreteObject>> {
+        self.0.clone()
     }
 }
-impl From<Rc<ConcreteObject>> for ConcreteKeyPage {
-    fn from(value: Rc<ConcreteObject>) -> Self {
-        Self { 0: value }
+impl From<Arc<RwLock<ConcreteObject>>> for ConcreteKeyPage {
+    fn from(value: Arc<RwLock<ConcreteObject>>) -> Self {
+        Self(value)
     }
 }
 
 /// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::InferredPage]
-pub struct ConcreteInferredPage(Rc<ConcreteObject>);
+pub struct ConcreteInferredPage(Arc<RwLock<ConcreteObject>>);
+
+impl Clone for ConcreteInferredPage {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
 
 impl ConcreteInferredPage {
     pub fn new<T, E>(cache: &mut ObjectCache) -> Self
     where
-        T: InferredPage + 'static,
+        T: Object + 'static,
         E: Error + Debug + Display + 'static,
     {
-        Self(ConcreteObject::from_obj_with_cache::<T, E>(cache))
+        if !T::INFERRED_PAGE {
+            panic!(
+                "Attempted to construct an inferred page, without inferred being `true` within object information! {}",
+                T::TYPE.ident
+            )
+        }
+
+        let page_type = ConcreteObject::from_obj_with_cache::<T, E>(cache);
+        Self(page_type.read().unwrap().inner())
     }
 
-    pub fn inner(&self) -> &ConcreteObject {
-        &self.0
+    pub fn inner(&self) -> Arc<RwLock<ConcreteObject>> {
+        self.0.clone()
     }
 }
 
-impl From<Rc<ConcreteObject>> for ConcreteInferredPage {
-    fn from(value: Rc<ConcreteObject>) -> Self {
-        Self { 0: value }
+impl From<Arc<RwLock<ConcreteObject>>> for ConcreteInferredPage {
+    fn from(value: Arc<RwLock<ConcreteObject>>) -> Self {
+        Self(value)
     }
 }
 
