@@ -1,20 +1,19 @@
 use crate::instances::*;
-use pdf_struct_traits::{Classify, InferredPage, KeyPage, Object, Root};
+use pdf_struct_traits::{Classify, Object, Root};
 use std::fmt::{Debug, Display};
+use std::sync::{Arc, RwLock};
 
 /// Represents the configuration for document structure.
 pub struct Config {
-    pub(crate) keys: Vec<InstanstiatedKeyPage>,
-    pub(crate) inferred: Vec<InstanstiatedInferredPage>,
-    pub(crate) root: InstanstiatedRoot,
+    pub(crate) types: Vec<Arc<RwLock<ConcretePageType>>>,
+    pub(crate) root: ConcreteRoot,
     pub(crate) offset: i32,
 }
 
 impl Config {
     pub fn builder() -> ConfigBuilder {
         ConfigBuilder {
-            keys: vec![],
-            inferred: vec![],
+            types: vec![],
             root: None,
             offset: 0,
         }
@@ -23,36 +22,21 @@ impl Config {
 
 /// Constructs a new Config
 pub struct ConfigBuilder {
-    keys: Vec<InstanstiatedKeyPage>,
-    inferred: Vec<InstanstiatedInferredPage>,
-    root: Option<InstanstiatedRoot>,
+    types: Vec<Arc<RwLock<ConcretePageType>>>,
+    root: Option<ConcreteRoot>,
     offset: i32,
 }
 
 impl ConfigBuilder {
-    /// Adds a key type to the config.
-    pub fn with_key<T, E>(mut self) -> Self
+    pub fn with_obj<T, E>(mut self) -> Self
     where
-        T: KeyPage + Classify + Object + 'static,
+        T: Object + Classify + 'static,
         E: std::error::Error + Debug + Display + Send + Sync + 'static,
     {
-        let mut builder = InstanstiatedObjectBuilder::new();
+        let mut builder = ConcreteObjectBuilder::new();
         let instanstiated = builder.build::<T, E>();
 
-        self.keys.push(instanstiated.into());
-        self
-    }
-
-    /// Adds an inferred type to the config.
-    pub fn with_inferred<T, E>(mut self) -> Self
-    where
-        T: InferredPage + Classify + Object + 'static,
-        E: std::error::Error + Debug + Display + Send + Sync + 'static,
-    {
-        let mut builder = InstanstiatedObjectBuilder::new();
-        let instanstiated = builder.build::<T, E>();
-
-        self.inferred.push(instanstiated.into());
+        self.types.push(instanstiated.clone());
         self
     }
 
@@ -61,7 +45,7 @@ impl ConfigBuilder {
     where
         T: Root + 'static,
     {
-        let root = InstanstiatedRoot::new();
+        let root = ConcreteRoot::new();
         self.root = Some(root);
 
         self
@@ -78,8 +62,7 @@ impl ConfigBuilder {
     /// Consumes the builder into a Config.
     pub fn build(self) -> Config {
         Config {
-            keys: self.keys,
-            inferred: self.inferred,
+            types: self.types,
             root: self.root.expect("A root struct is required!"),
             offset: self.offset,
         }
