@@ -91,9 +91,9 @@ fn test() {
 
     let config = Config::builder()
         .with_root::<Document>()
-        .with_key::<Chapter, Error>()
-        .with_key::<SubChapter, Error>()
-        .with_inferred::<Diagram, Error>()
-        .with_inferred::<DataTable, Error>()
+        .with_obj::<Chapter, Error>()
+        .with_obj::<SubChapter, Error>()
+        .with_obj::<Diagram, Error>()
+        .with_obj::<DataTable, Error>()
         .build();
 }
