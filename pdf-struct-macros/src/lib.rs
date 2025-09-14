@@ -22,6 +22,7 @@ enum ObjectArg {
     Patterns(Vec<Expr>),
 }
 
+#[derive(PartialEq)]
 enum PageType {
     Key,
     Inferred,
@@ -191,19 +192,6 @@ pub fn object(args: TokenStream, input: TokenStream) -> TokenStream {
         }
     }
 
-    match page_type {
-        PageType::Key => {
-            generated_impls.push(quote! {
-                impl KeyPage for #struct_name {}
-            });
-        }
-        PageType::Inferred => {
-            generated_impls.push(quote! {
-                impl InferredPage for #struct_name {}
-            });
-        }
-    }
-
     // (combine metadata and children, with metadata first)
     let all_children: Vec<_> = metadata_types.iter().chain(children_types.iter()).collect();
     let children_array = if all_children.is_empty() {
@@ -228,6 +216,9 @@ pub fn object(args: TokenStream, input: TokenStream) -> TokenStream {
         });
     }
 
+    let key = page_type == PageType::Key;
+    let inferred = page_type == PageType::Inferred;
+
     let object_impl = quote! {
         impl Object for #struct_name {
             const CHILDREN: &'static [TypeInformation] = #children_array;
@@ -235,6 +226,10 @@ pub fn object(args: TokenStream, input: TokenStream) -> TokenStream {
                 id: std::any::TypeId::of::<Self>(),
                 ident: stringify!(#struct_name),
             };
+            const INFERRED_PAGE: bool = #key;
+            const KEY_PAGE: bool = #inferred;
+
+
 
             type Parent = #parent_type;
             type Pair = #pair_type;
