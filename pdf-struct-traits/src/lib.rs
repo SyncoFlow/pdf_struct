@@ -38,7 +38,7 @@ impl Pattern {
 
 /// Indicates the position of an object relative to the order of pages
 /// and comparing against the object paired.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum PairSequence {
     First,
     Last,
@@ -52,25 +52,6 @@ pub trait PairWith<T: Object>: Object {
     const SEQUENCE: PairSequence;
     const PATTERNS: &'static [Pattern];
 }
-
-/// Defines Self to be a page that CANNOT be inferred
-/// Self has to be classified to be constructed
-///
-/// But, Context can still be applied
-/// i.e if we know Diagram-Table pairs come after a SubChapter
-/// but SubChapter is a KeyPage, if after the inferred pairs the next page
-/// can be contextually inferred to be a SubChapter or a Chapter
-///
-/// The main difference being until the next KeyPage is found
-/// we cannot parallelize past that point.
-///
-/// So, we can keep inferring where Diagram-Table pairs are,
-/// but we cannot infer where the sub-chapter 2 sub-chapters ahead is.  
-pub trait KeyPage: Object {}
-
-/// Marks Self to be a page that CAN be inferred
-/// Self does NOT have be explicitly classified to be constructed
-pub trait InferredPage: Object {}
 
 /// Signifies that a struct represents the root document
 pub trait Root {}
@@ -145,6 +126,8 @@ impl Object for () {
         id: TypeId::of::<Self>(),
         ident: "()",
     };
+    const INFERRED_PAGE: bool = false;
+    const KEY_PAGE: bool = false;
 
     type Pair = ();
     type Parent = ();
@@ -180,6 +163,8 @@ where
 {
     const CHILDREN: &'static [TypeInformation] = &[];
     const TYPE: TypeInformation;
+    const INFERRED_PAGE: bool;
+    const KEY_PAGE: bool;
 
     type Parent: Parent = ();
     type Pair: PairWith<Self> = ();
