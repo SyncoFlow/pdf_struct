@@ -226,10 +226,8 @@ pub fn object(args: TokenStream, input: TokenStream) -> TokenStream {
                 id: std::any::TypeId::of::<Self>(),
                 ident: stringify!(#struct_name),
             };
-            const INFERRED_PAGE: bool = #key;
-            const KEY_PAGE: bool = #inferred;
-
-
+            const INFERRED_PAGE: bool = #inferred;
+            const KEY_PAGE: bool = #key;
 
             type Parent = #parent_type;
             type Pair = #pair_type;
