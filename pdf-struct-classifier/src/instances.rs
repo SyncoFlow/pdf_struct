@@ -59,16 +59,26 @@ pub(crate) type ClassificationMethod<T, E> = fn(&[u8]) -> ClassificationResult<T
 ///     T is shared data
 ///     E is error
 ///     S is Self (the constructed object)
-pub(crate) type ExtractionMethod<T, E, S> = fn(&[u8], T) -> Result<S, E>;
+pub(crate) type ExtractionMethod<T, E, S> = fn(&[u8], S) -> Result<T, E>;
 
 /// Cache holding information of each  
 pub(crate) type ObjectCache = DashMap<TypeId, Arc<RwLock<ConcretePageType>>>;
 
 /// Crate-level error that can only be called when attempting
 /// to cast into a [ClassificationMethod] or [ExtractionMethod]
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub(crate) enum CastError {
     TypeMismatch { expected: TypeId, actual: TypeId },
+}
+
+impl Display for CastError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CastError::TypeMismatch { expected, actual } => {
+                f.write_fmt(format_args!("expected {:?} found {:?}", expected, actual))
+            }
+        }
+    }
 }
 
 /// Represents a type that implements [pdf_struct_traits::Object] at runtime.
@@ -87,11 +97,24 @@ pub struct ConcreteObject {
     /// ! This member should NOT be manually set or casted into.
     /// ! Utilize [ConcreteObject::cast_extraction]
     pub(crate) extraction_method: Box<dyn AnyClone>,
+    /// Type-erased classification function that can be called without knowing specific types
+    pub(crate) erased_classify_fn: Box<dyn Fn(&[u8]) -> ErasedClassificationResult + Send + Sync>,
+    /// Type-erased extraction function that can be called without knowing specific types
+    pub(crate) erased_extract_fn:
+        Box<dyn Fn(&[u8], Box<dyn Any>) -> Result<Box<dyn Any>, String> + Send + Sync>,
     /// Reflected information of the type defined as an object
     /// Which Self represents at runtime.
     pub(crate) obj_type: TypeInformation,
     /// The reflected type information for the children of this type.
     pub(crate) expected_children: Vec<TypeInformation>,
+}
+
+#[derive(Debug)]
+pub enum ErasedClassificationResult {
+    Confident(f32, Box<dyn Any>),
+    Probable(f32, Box<dyn Any>),
+    Uncertain(f32, Box<dyn Any>),
+    Err(String),
 }
 
 impl ConcreteObject {
@@ -124,12 +147,24 @@ impl ConcreteObject {
         page_type
     }
 
+    /// Type-erased classify method that can be called without knowing specific types
+    pub fn classify_erased(&self, img: &[u8]) -> ErasedClassificationResult {
+        (self.erased_classify_fn)(img)
+    }
+
+    /// Type-erased extract method that can be called without knowing specific types
+    pub fn extract_erased(
+        &self,
+        img: &[u8],
+        shared_data: Box<dyn Any>,
+    ) -> Result<Box<dyn Any>, String> {
+        (self.erased_extract_fn)(img, shared_data)
+    }
+
     /// Casts T and E into fn<T, E>(&\[u8]) -> ClassificationResult<T, E>;
     /// This method is unsafe because [ConcreteObject::classification_method]
     /// may not match the expected TypeId to cast back into a concrete [ClassificationMethod]
-    pub(crate) unsafe fn cast_classification<T, E>(
-        &self,
-    ) -> Result<ClassificationMethod<T, E>, CastError>
+    unsafe fn cast_classification<T, E>(&self) -> Result<ClassificationMethod<T, E>, CastError>
     where
         T: Send + Sync + 'static,
         E: Error + Debug + Display + 'static,
@@ -156,19 +191,17 @@ impl ConcreteObject {
     /// Casts T, E, S into fn(&\[u8], T) -> Result<S, E>;
     /// This method is unsafe because [ConcreteObject::extraction_method]
     /// may not match the expected TypeId to cast back into a concrete [ExtractionMethod]
-    pub(crate) unsafe fn cast_extraction<T, E, S>(
-        &self,
-    ) -> Result<ExtractionMethod<T, E, S>, CastError>
+    unsafe fn cast_extraction<T, E, S>(&self) -> Result<ExtractionMethod<T, E, S>, CastError>
     where
         T: Send + Sync + 'static,
         E: Error + Debug + Display + 'static,
         S: Sized + 'static,
     {
-        let expected_type_id = TypeId::of::<fn(&[u8], T) -> Result<S, E>>();
+        let expected_type_id = TypeId::of::<fn(&[u8], S) -> Result<T, E>>();
         let actual_type_id = self.extraction_method.type_id();
 
         let func_ptr = (self.extraction_method.as_ref() as &dyn Any)
-            .downcast_ref::<fn(&[u8], T) -> Result<S, E>>();
+            .downcast_ref::<fn(&[u8], S) -> Result<T, E>>();
 
         match func_ptr {
             Some(f) => Ok(*f),
@@ -180,32 +213,60 @@ impl ConcreteObject {
     }
 
     /// Internal method that does the actual construction
-    fn from_obj_internal<T, E>(cache: &mut ObjectCache) -> Self
+    fn from_obj_internal<Obj, Err>(cache: &mut ObjectCache) -> Self
     where
-        T: Object + 'static,
-        E: Error + Debug + Display + 'static,
+        Obj: Object + 'static,
+        Err: Error + Debug + Display + 'static,
     {
-        let parent = if T::Parent::TYPE.ident == "()" {
+        let parent = if Obj::Parent::TYPE.ident == "()" {
             None
         } else {
-            Some(Self::from_obj_with_cache::<T::Parent, E>(cache))
+            Some(Self::from_obj_with_cache::<Obj::Parent, Err>(cache))
         };
 
         Self {
             parent,
             children: vec![],
             classification_method: Box::new(
-                T::classify::<E> as ClassificationMethod<<T as Classify>::SharedData, E>,
+                Obj::classify::<Err> as ClassificationMethod<<Obj as Classify>::SharedData, Err>,
             ),
             extraction_method: Box::new(
-                T::extract::<E> as ExtractionMethod<<T as Classify>::SharedData, E, T>,
+                Obj::extract::<Err> as ExtractionMethod<Obj, Err, <Obj as Classify>::SharedData>,
             ),
-            obj_type: T::TYPE,
-            expected_children: T::CHILDREN.to_vec(),
+            erased_classify_fn: Box::new(|img| {
+                let result = Obj::classify::<Err>(img);
+                match result {
+                    ClassificationResult::Confident(confidence, data) => {
+                        ErasedClassificationResult::Confident(confidence, Box::new(data))
+                    }
+                    ClassificationResult::Probable(confidence, data) => {
+                        ErasedClassificationResult::Probable(confidence, Box::new(data))
+                    }
+                    ClassificationResult::Uncertain(confidence, data) => {
+                        ErasedClassificationResult::Uncertain(confidence, Box::new(data))
+                    }
+                    ClassificationResult::Err(err) => {
+                        ErasedClassificationResult::Err(err.to_string())
+                    }
+                }
+            }),
+            erased_extract_fn: Box::new(|img, shared_data| {
+                // Extract the shared data from the type-erased box
+                let shared_data = shared_data
+                    .downcast::<<Obj as Classify>::SharedData>()
+                    .map_err(|_| "Type mismatch for shared data".to_string())?;
+
+                match Obj::extract::<Err>(img, *shared_data) {
+                    Ok(obj) => Ok(Box::new(obj) as Box<dyn Any>),
+                    Err(err) => Err(err.to_string()),
+                }
+            }),
+            obj_type: Obj::TYPE,
+            expected_children: Obj::CHILDREN.to_vec(),
         }
     }
 
-    /// Add a child, checking if it's allowed
+    /// Add a childs a child but checks if it's allowed first.
     pub fn add_child(&mut self, child: Arc<RwLock<ConcretePageType>>) -> Result<(), String> {
         let child_type_id = {
             let child_inner = child.read().unwrap();
@@ -365,19 +426,6 @@ impl ConcreteObject {
     }
 }
 
-impl Clone for ConcreteObject {
-    fn clone(&self) -> Self {
-        Self {
-            parent: self.parent.clone(),
-            children: self.children.clone(),
-            classification_method: self.classification_method.clone_box(),
-            extraction_method: self.extraction_method.clone_box(),
-            obj_type: self.obj_type.clone(),
-            expected_children: self.expected_children.clone(),
-        }
-    }
-}
-
 /// Represents any type that is an [pdf_struct_traits::Object] and also implements [pdf_struct_traits::PairWith]
 pub struct ConcretePair {
     pub sequence: PairSequence,
@@ -510,7 +558,21 @@ impl ConcreteObjectBuilder {
     fn unwrap_obj(obj: Arc<RwLock<ConcreteObject>>) -> ConcreteObject {
         match Arc::try_unwrap(obj) {
             Ok(rwlock) => rwlock.into_inner().unwrap(),
-            Err(arc) => arc.read().unwrap().clone(),
+            Err(arc) => {
+                let obj_ref = arc.read().unwrap();
+                ConcreteObject {
+                    parent: obj_ref.parent.clone(),
+                    children: obj_ref.children.clone(),
+                    classification_method: obj_ref.classification_method.clone_box(),
+                    extraction_method: obj_ref.extraction_method.clone_box(),
+                    erased_classify_fn: Box::new(|_| {
+                        ErasedClassificationResult::Err("Cloned object".to_string())
+                    }),
+                    erased_extract_fn: Box::new(|_, _| Err("Cloned object".to_string())),
+                    obj_type: obj_ref.obj_type.clone(),
+                    expected_children: obj_ref.expected_children.clone(),
+                }
+            }
         }
     }
 
@@ -525,7 +587,21 @@ impl ConcreteObjectBuilder {
         let inner_arc = obj.read().unwrap().inner();
         let mut obj_mut = match Arc::try_unwrap(inner_arc) {
             Ok(rwlock) => rwlock.into_inner().unwrap(),
-            Err(arc) => arc.read().unwrap().clone(),
+            Err(arc) => {
+                let obj_ref = arc.read().unwrap();
+                ConcreteObject {
+                    parent: obj_ref.parent.clone(),
+                    children: obj_ref.children.clone(),
+                    classification_method: obj_ref.classification_method.clone_box(),
+                    extraction_method: obj_ref.extraction_method.clone_box(),
+                    erased_classify_fn: Box::new(|_| {
+                        ErasedClassificationResult::Err("Cloned object".to_string())
+                    }),
+                    erased_extract_fn: Box::new(|_, _| Err("Cloned object".to_string())),
+                    obj_type: obj_ref.obj_type.clone(),
+                    expected_children: obj_ref.expected_children.clone(),
+                }
+            }
         };
 
         obj_mut.collect_children_from_cache(&self.cache);
@@ -823,8 +899,35 @@ mod tests {
             children: vec![],
             classification_method,
             extraction_method: Box::new(
-                extract_fn as ExtractionMethod<SharedData, MyError, Constructed>,
+                extract_fn as ExtractionMethod<Constructed, MyError, SharedData>,
             ) as Box<dyn AnyClone>,
+            erased_classify_fn: Box::new(|img| {
+                let result = classify_fn(img);
+                match result {
+                    ClassificationResult::Confident(confidence, data) => {
+                        ErasedClassificationResult::Confident(confidence, Box::new(data))
+                    }
+                    ClassificationResult::Probable(confidence, data) => {
+                        ErasedClassificationResult::Probable(confidence, Box::new(data))
+                    }
+                    ClassificationResult::Uncertain(confidence, data) => {
+                        ErasedClassificationResult::Uncertain(confidence, Box::new(data))
+                    }
+                    ClassificationResult::Err(err) => {
+                        ErasedClassificationResult::Err(err.to_string())
+                    }
+                }
+            }),
+            erased_extract_fn: Box::new(|img, shared_data| {
+                let shared_data = shared_data
+                    .downcast::<SharedData>()
+                    .map_err(|_| "Type mismatch for shared data".to_string())?;
+
+                match extract_fn(img, *shared_data) {
+                    Ok(obj) => Ok(Box::new(obj) as Box<dyn Any>),
+                    Err(err) => Err(err.to_string()),
+                }
+            }),
             obj_type: TypeInformation {
                 id: TypeId::of::<()>(),
                 ident: "Test",
@@ -844,7 +947,7 @@ mod tests {
             );
 
             let got_extract = obj
-                .cast_extraction::<SharedData, MyError, Constructed>()
+                .cast_extraction::<Constructed, MyError, SharedData>()
                 .expect("extraction cast failed");
             let got_e_ptr = got_extract as *const ();
             let want_e_ptr = extract_fn as *const ();
