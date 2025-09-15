@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock};
 pub struct Config {
     pub(crate) types: Vec<Arc<RwLock<ConcretePageType>>>,
     pub(crate) root: ConcreteRoot,
-    pub(crate) offset: i32,
+    pub(crate) offset: usize,
 }
 
 impl Config {
@@ -24,7 +24,7 @@ impl Config {
 pub struct ConfigBuilder {
     types: Vec<Arc<RwLock<ConcretePageType>>>,
     root: Option<ConcreteRoot>,
-    offset: i32,
+    offset: usize,
 }
 
 impl ConfigBuilder {
@@ -53,7 +53,7 @@ impl ConfigBuilder {
 
     /// Sets the page the classifier will start from, instead of 0.
     /// ! (pages are zero-indexed)
-    pub fn set_start(mut self, offset: i32) -> Self {
+    pub fn set_start(mut self, offset: usize) -> Self {
         self.offset = offset;
 
         self
