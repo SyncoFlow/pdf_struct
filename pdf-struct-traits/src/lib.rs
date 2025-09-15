@@ -81,7 +81,7 @@ where
     /// Probable the provided image is of type T/Self 50-90% confidence
     Probable(ConfidenceScore, T),
     /// Uncertain the provided image is of type T/Self <50% confidence
-    Uncertain(ConfidenceScore),
+    Uncertain(ConfidenceScore, T),
     /// Failed to classify image.
     Err(E),
 }
